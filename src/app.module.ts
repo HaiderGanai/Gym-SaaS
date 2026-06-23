@@ -19,6 +19,19 @@ import { ScheduleModule } from '@nestjs/schedule';
 // import { BookingsModule } from './bookings/bookings.module';
 // import { CommunicationModule } from './communication/communication.module';
 // import { ReportsModule } from './reports/reports.module';
+import { OrganizationModule } from './organization/organization.module';
+import { GymModule } from './gym/gym.module';
+import { StaffModule } from './staff/staff.module';
+import { AuthModule } from './auth/auth.module';
+import { MembersModule } from './members/members.module';
+import { PlansModule } from './plans/plans.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { InvoicesModule } from './invoices/invoices.module';
+import { VatModule } from './vat/vat.module';
+import { ScheduleModule } from './schedule/schedule.module';
+import { BookingsModule } from './bookings/bookings.module';
+import { CommunicationModule } from './communication/communication.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -47,6 +60,32 @@ import { ScheduleModule } from '@nestjs/schedule';
         logging: config.get<string>('NODE_ENV') === 'development',
       }),
     }),
+
+    OrganizationModule,
+
+    GymModule,
+
+    StaffModule,
+
+    AuthModule,
+
+    MembersModule,
+
+    PlansModule,
+
+    SubscriptionsModule,
+
+    InvoicesModule,
+
+    VatModule,
+
+    ScheduleModule,
+
+    BookingsModule,
+
+    CommunicationModule,
+
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
