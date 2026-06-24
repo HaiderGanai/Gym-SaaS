@@ -1,0 +1,72 @@
+// members/entities/member.entity.ts
+import {
+  Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
+  OneToMany,
+} from 'typeorm';
+import { MemberGymAccess } from './member-gym-access.entity';
+import { Waiver } from './waiver.entity';
+import { MemberSubscription } from '../../subscriptions/entities/member-subscription.entity';
+import { Booking } from '../../bookings/entities/booking.entity';
+import { Invoice } from '../../invoices/entities/invoice.entity';
+import { NotificationLog } from '../../communication/entities/notification-log.entity';
+
+export enum MemberStatus {
+  ACTIVE    = 'active',
+  PAUSED    = 'paused',
+  EXPIRED   = 'expired',
+  CANCELLED = 'cancelled',
+}
+
+@Entity('members')
+export class Member {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column({ unique: true })
+  email!: string;
+
+  @Column()
+  full_name!: string;
+
+  @Column({ nullable: true })
+  phone!: string;
+
+  @Column({ nullable: true })
+  photo_url!: string;
+
+  @Column()
+  password_hash!: string;
+
+  @Column({ type: 'enum', enum: MemberStatus, default: MemberStatus.ACTIVE })
+  status!: MemberStatus;
+
+  @Column({ type: 'date', nullable: true })
+  pause_start!: Date;
+
+  @Column({ type: 'date', nullable: true })
+  resume_date!: Date;
+
+  @Column({ nullable: true })
+  fcm_token!: string;
+
+  @CreateDateColumn()
+  created_at!: Date;
+
+  @OneToMany(() => MemberGymAccess, (a) => a.member)
+  gym_access!: MemberGymAccess[];
+
+  @OneToMany(() => Waiver, (w) => w.member)
+  waivers!: Waiver[];
+
+  @OneToMany(() => MemberSubscription, (s) => s.member)
+  subscriptions!: MemberSubscription[];
+
+  @OneToMany(() => Booking, (b) => b.member)
+  bookings!: Booking[];
+
+  @OneToMany(() => Invoice, (i) => i.member)
+  invoices!: Invoice[];
+
+  @OneToMany(() => NotificationLog, (n) => n.member)
+  notification_logs!: NotificationLog[];
+}
