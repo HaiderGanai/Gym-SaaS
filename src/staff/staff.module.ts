@@ -1,9 +1,18 @@
 import { Module } from '@nestjs/common';
-import { StaffGymAccess } from './entities/staff-gym-access.entity';
-import { StaffUser } from './entities/staff-user.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { StaffUser } from './entities/staff-user.entity';
+import { StaffGymAccess } from './entities/staff-gym-access.entity';
+import { StaffService } from './staff.service';
+import { StaffController } from './staff.controller';
+import { CommunicationModule } from '../communication/communication.module';
 
 @Module({
-    imports: [TypeOrmModule.forFeature([StaffUser, StaffGymAccess])],
+  imports: [
+    TypeOrmModule.forFeature([StaffUser, StaffGymAccess]),
+    CommunicationModule,
+  ],
+  controllers: [StaffController],
+  providers: [StaffService],
+  exports: [StaffService],
 })
 export class StaffModule {}
