@@ -11,6 +11,7 @@ async function bootstrap() {
       transform: true,       // auto-cast body to DTO class instance
     }),
   );
+  app.setGlobalPrefix('api/v1');
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();
