@@ -5,9 +5,13 @@ import { MemberGymAccess } from './entities/member-gym-access.entity';
 import { Waiver } from './entities/waiver.entity';
 import { MembersService } from './members.service';
 import { MembersController } from './members.controller';
+import { CommunicationModule } from '../communication/communication.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Member, MemberGymAccess, Waiver])],
+  imports: [
+    TypeOrmModule.forFeature([Member, MemberGymAccess, Waiver]),
+    CommunicationModule,
+  ],
   controllers: [MembersController],
   providers: [MembersService],
   exports: [MembersService],

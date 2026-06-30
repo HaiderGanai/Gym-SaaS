@@ -49,6 +49,12 @@ export class Member {
   @Column({ nullable: true })
   fcm_token!: string;
 
+  @Column({ nullable: true })
+  invite_token!: string;
+
+  @Column({ nullable: true })
+  invite_expires_at!: Date;
+
   @CreateDateColumn()
   created_at!: Date;
 

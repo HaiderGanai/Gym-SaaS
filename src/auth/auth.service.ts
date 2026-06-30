@@ -6,6 +6,7 @@ import { MembersService } from '../members/members.service';
 import { StaffLoginDto } from './dto/staff-login.dto';
 import { MemberLoginDto } from './dto/member-login.dto';
 import { AcceptInviteDto } from './dto/accept-invite.dto';
+import { AcceptMemberInviteDto } from '../members/dto/accept-member-invite.dto';
 import { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
 @Injectable()
@@ -44,6 +45,20 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, member.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
+    const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
+
+    const payload: MemberJwtPayload = {
+      sub: member.id,
+      email: member.email,
+      gym_ids,
+      primary_gym_id,
+      status: member.status,
+    };
+    return { access_token: this.jwtService.sign(payload) };
+  }
+
+  async acceptMemberInvite(dto: AcceptMemberInviteDto): Promise<{ access_token: string }> {
+    const member = await this.membersService.acceptMemberInvite(dto);
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
 
     const payload: MemberJwtPayload = {
