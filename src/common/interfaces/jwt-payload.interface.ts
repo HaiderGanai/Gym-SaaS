@@ -5,7 +5,7 @@ export interface StaffJwtPayload {
   sub: string;
   email: string;
   role: StaffRole;
-  org_id: string;
+  org_id: string | null;
   gym_ids: string[];
 }
 
