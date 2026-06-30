@@ -43,6 +43,12 @@ export class StaffUser {
   @Column({ nullable: true })
   invite_expires_at!: Date;
 
+  @Column({ nullable: true })
+  reset_token!: string;
+
+  @Column({ nullable: true })
+  reset_token_expires_at!: Date;
+
   @CreateDateColumn()
   created_at!: Date;
 

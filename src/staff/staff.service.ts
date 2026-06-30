@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -74,5 +75,63 @@ export class StaffService {
     await this.mailService.sendStaffInvite(dto.email, dto.full_name, inviteToken);
 
     return { message: `Invitation sent to ${dto.email}` };
+  }
+
+  private generateOtp(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private otpExpiry(): Date {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 10);
+    return d;
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const staff = await this.staffRepo.findOne({ where: { email } });
+    if (!staff) return; // silent — prevent email enumeration
+
+    const otp = this.generateOtp();
+    staff.reset_token = otp;
+    staff.reset_token_expires_at = this.otpExpiry();
+    await this.staffRepo.save(staff);
+
+    await this.mailService.sendOtp(staff.email, staff.email, otp, 'reset');
+  }
+
+  async resetPassword(email: string, otp: string, newPassword: string): Promise<void> {
+    const staff = await this.staffRepo.findOne({ where: { email } });
+    if (!staff || staff.reset_token !== otp || !staff.reset_token_expires_at || staff.reset_token_expires_at < new Date()) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    staff.password_hash = await bcrypt.hash(newPassword, 12);
+    staff.reset_token = null!;
+    staff.reset_token_expires_at = null!;
+    await this.staffRepo.save(staff);
+  }
+
+  async sendChangePasswordOtp(staffId: string): Promise<void> {
+    const staff = await this.staffRepo.findOne({ where: { id: staffId } });
+    if (!staff) throw new NotFoundException('Staff not found');
+
+    const otp = this.generateOtp();
+    staff.reset_token = otp;
+    staff.reset_token_expires_at = this.otpExpiry();
+    await this.staffRepo.save(staff);
+
+    await this.mailService.sendOtp(staff.email, staff.email, otp, 'change');
+  }
+
+  async changePassword(staffId: string, otp: string, newPassword: string): Promise<void> {
+    const staff = await this.staffRepo.findOne({ where: { id: staffId } });
+    if (!staff || staff.reset_token !== otp || !staff.reset_token_expires_at || staff.reset_token_expires_at < new Date()) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    staff.password_hash = await bcrypt.hash(newPassword, 12);
+    staff.reset_token = null!;
+    staff.reset_token_expires_at = null!;
+    await this.staffRepo.save(staff);
   }
 }

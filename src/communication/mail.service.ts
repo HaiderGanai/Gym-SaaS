@@ -88,4 +88,35 @@ export class MailService {
       throw new InternalServerErrorException('Failed to send invitation email');
     }
   }
+
+  async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
+    const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
+    const action  = purpose === 'reset' ? 'reset your password' : 'change your password';
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject,
+        html: `
+          <h2>Hi ${name},</h2>
+          <p>Use the OTP below to ${action}. It expires in <strong>10 minutes</strong>.</p>
+          <div style="
+            display:inline-block;
+            padding:16px 32px;
+            background:#f3f4f6;
+            border-radius:8px;
+            font-size:32px;
+            font-weight:700;
+            letter-spacing:8px;
+            color:#111827;
+            margin:16px 0;
+          ">${otp}</div>
+          <p>If you did not request this, you can safely ignore this email.</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send OTP email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send OTP email');
+    }
+  }
 }
