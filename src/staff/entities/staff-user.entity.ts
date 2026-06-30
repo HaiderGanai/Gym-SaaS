@@ -7,10 +7,10 @@ import {
 import { StaffGymAccess } from './staff-gym-access.entity';
 
 export enum StaffRole {
-  ORG_OWNER   = 'org_owner',
-  ORG_ADMIN   = 'org_admin',
-  GYM_MANAGER = 'gym_manager',
-  FRONT_DESK  = 'front_desk',
+  SUPER_ADMIN = 'super_admin', // platform owner — cross-org visibility, no org affiliation
+  ORG_ADMIN   = 'org_admin',   // full control of one organization and all its branches
+  GYM_MANAGER = 'gym_manager', // manages a single branch
+  FRONT_DESK  = 'front_desk',  // front-desk operations only
 }
 
 @Entity('staff_users')
@@ -18,12 +18,12 @@ export class StaffUser {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column()
-  organization_id!: string;
+  @Column({ nullable: true })
+  organization_id!: string | null;
 
-  @ManyToOne(() => Organization, (org) => org.staff)
+  @ManyToOne(() => Organization, (org) => org.staff, { nullable: true })
   @JoinColumn({ name: 'organization_id' })
-  organization!: Organization;
+  organization!: Organization | null;
 
   @Column({ unique: true })
   email!: string;
