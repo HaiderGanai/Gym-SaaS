@@ -3,21 +3,38 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
-  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
-import { Member } from './entities/member.entity';
+import { Member, MemberStatus } from './entities/member.entity';
 import { MemberGymAccess } from './entities/member-gym-access.entity';
 import { Waiver } from './entities/waiver.entity';
+import { Gym } from '../gym/entities/gym.entity';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { AcceptMemberInviteDto } from './dto/accept-member-invite.dto';
 import { SignWaiverDto } from './dto/sign-waiver.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
+import { UpdateMemberStatusDto } from './dto/update-member-status.dto';
 import { MailService } from '../communication/mail.service';
+import { StaffRole } from '../staff/entities/staff-user.entity';
+import type { StaffJwtPayload } from '../common/interfaces/jwt-payload.interface';
+
+const MEMBER_SAFE_SELECT = {
+  id: true,
+  email: true,
+  full_name: true,
+  phone: true,
+  photo_url: true,
+  status: true,
+  pause_start: true,
+  resume_date: true,
+  created_at: true,
+} as const;
 
 @Injectable()
 export class MembersService {
@@ -28,8 +45,12 @@ export class MembersService {
     private accessRepo: Repository<MemberGymAccess>,
     @InjectRepository(Waiver)
     private waiverRepo: Repository<Waiver>,
+    @InjectRepository(Gym)
+    private gymRepo: Repository<Gym>,
     private mailService: MailService,
   ) {}
+
+  // ── Existing helpers used by AuthService ────────────────────────────────────
 
   findByEmail(email: string): Promise<Member | null> {
     return this.memberRepo.findOne({ where: { email } });
@@ -126,6 +147,8 @@ export class MembersService {
     return this.memberRepo.save(member);
   }
 
+  // ── Password management ─────────────────────────────────────────────────────
+
   private generateOtp(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
@@ -138,7 +161,7 @@ export class MembersService {
 
   async forgotPassword(email: string): Promise<void> {
     const member = await this.memberRepo.findOne({ where: { email } });
-    if (!member) return; // silent — prevent email enumeration
+    if (!member) return;
 
     const otp = this.generateOtp();
     member.reset_token = otp;
@@ -205,5 +228,105 @@ export class MembersService {
     const saved = await this.waiverRepo.save(waiver);
 
     return { message: 'Waiver signed successfully', waiver_id: saved.id };
+  }
+
+  // ── Member management (new) ─────────────────────────────────────────────────
+
+  // Resolves which gym IDs a staff caller can see members for
+  private async resolveGymIds(user: StaffJwtPayload): Promise<string[]> {
+    if (user.role === StaffRole.ORG_ADMIN) {
+      const gyms = await this.gymRepo.find({
+        where: { organization_id: user.org_id! },
+        select: { id: true },
+      });
+      return gyms.map((g) => g.id);
+    }
+    return user.gym_ids; // gym_manager / front_desk
+  }
+
+  async findAll(user: StaffJwtPayload) {
+    if (user.role === StaffRole.SUPER_ADMIN) {
+      return this.memberRepo.find({ select: MEMBER_SAFE_SELECT, order: { created_at: 'DESC' } });
+    }
+
+    const gymIds = await this.resolveGymIds(user);
+    if (!gymIds.length) return [];
+
+    const rows = await this.accessRepo.find({
+      where: { gym_id: In(gymIds), is_active: true },
+      select: { member_id: true },
+    });
+    const ids = [...new Set(rows.map((r) => r.member_id))];
+    if (!ids.length) return [];
+
+    return this.memberRepo.find({
+      where: { id: In(ids) },
+      select: MEMBER_SAFE_SELECT,
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async findOne(id: string, user: StaffJwtPayload) {
+    const member = await this.memberRepo.findOne({ where: { id }, select: MEMBER_SAFE_SELECT });
+    if (!member) throw new NotFoundException('Member not found');
+
+    if (user.role !== StaffRole.SUPER_ADMIN) {
+      const gymIds = await this.resolveGymIds(user);
+      if (!gymIds.length) throw new ForbiddenException('Access denied');
+      const access = await this.accessRepo.findOne({
+        where: { member_id: id, gym_id: In(gymIds), is_active: true },
+      });
+      if (!access) throw new ForbiddenException('Access denied');
+    }
+
+    const gymAccess = await this.accessRepo.find({ where: { member_id: id } });
+    return { ...member, gym_access: gymAccess };
+  }
+
+  async getMe(memberId: string) {
+    const member = await this.memberRepo.findOne({ where: { id: memberId }, select: MEMBER_SAFE_SELECT });
+    if (!member) throw new NotFoundException('Member not found');
+    const gymAccess = await this.accessRepo.find({ where: { member_id: memberId, is_active: true } });
+    return { ...member, gym_access: gymAccess };
+  }
+
+  async updateProfile(memberId: string, dto: UpdateMemberDto) {
+    const member = await this.memberRepo.findOne({ where: { id: memberId } });
+    if (!member) throw new NotFoundException('Member not found');
+
+    if (dto.full_name !== undefined) member.full_name = dto.full_name;
+    if (dto.phone !== undefined) member.phone = dto.phone;
+    if (dto.photo_url !== undefined) member.photo_url = dto.photo_url;
+
+    const saved = await this.memberRepo.save(member);
+    const { password_hash, reset_token, reset_token_expires_at, invite_token, invite_expires_at, fcm_token, ...safe } = saved as any;
+    return safe;
+  }
+
+  async updateStatus(memberId: string, dto: UpdateMemberStatusDto, user: StaffJwtPayload) {
+    const member = await this.memberRepo.findOne({ where: { id: memberId } });
+    if (!member) throw new NotFoundException('Member not found');
+
+    if (user.role !== StaffRole.SUPER_ADMIN) {
+      const gymIds = await this.resolveGymIds(user);
+      const access = gymIds.length
+        ? await this.accessRepo.findOne({ where: { member_id: memberId, gym_id: In(gymIds), is_active: true } })
+        : null;
+      if (!access) throw new ForbiddenException('Access denied');
+    }
+
+    member.status = dto.status;
+
+    if (dto.status === MemberStatus.PAUSED) {
+      if (dto.pause_start) member.pause_start = new Date(dto.pause_start);
+      if (dto.resume_date) member.resume_date = new Date(dto.resume_date);
+    } else if (dto.status === MemberStatus.ACTIVE) {
+      member.pause_start = null!;
+      member.resume_date = null!;
+    }
+
+    const saved = await this.memberRepo.save(member);
+    const { password_hash, reset_token, reset_token_expires_at, invite_token, invite_expires_at, fcm_token, ...safe } = saved as any;
+    return safe;
   }
 }
