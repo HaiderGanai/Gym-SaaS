@@ -1,7 +1,9 @@
 import {
   Controller, Get, Post, Patch, Delete,
   Param, Body, UseGuards, ParseUUIDPipe,
+  UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { OrganizationService } from './organization.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
@@ -38,14 +40,24 @@ export class OrganizationController {
     return this.orgService.findOne(id, user);
   }
 
+  // accepts JSON, or multipart/form-data with an optional 'logo' image file
+  // (uploaded to Cloudinary → logo_url)
   @Patch(':id')
   @Roles(StaffRole.ORG_ADMIN)
+  @UseInterceptors(FileInterceptor('logo', {
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) =>
+      file.mimetype.startsWith('image/')
+        ? cb(null, true)
+        : cb(new BadRequestException('logo must be an image file'), false),
+  }))
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateOrganizationDto,
     @CurrentUser() user: StaffJwtPayload,
+    @UploadedFile() logo?: Express.Multer.File,
   ) {
-    return this.orgService.update(id, dto, user);
+    return this.orgService.update(id, dto, user, logo);
   }
 
   @Delete(':id')
