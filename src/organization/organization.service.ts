@@ -71,7 +71,11 @@ export class OrganizationService {
         ...(accent ? { accent } : {}),
       };
     }
-    if (logo) org.logo_url = await this.uploadLogo(logo);
+    if (logo) {
+      org.logo_url = await this.uploadLogo(logo);
+      // keep the theme blob self-contained — frontend reads everything from branding
+      org.branding = { ...(org.branding ?? {}), logo_url: org.logo_url };
+    }
     return this.orgRepo.save(org);
   }
 
