@@ -3,7 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: Stripe webhook signature verification needs the unparsed request body
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,       // strip unknown fields from the body

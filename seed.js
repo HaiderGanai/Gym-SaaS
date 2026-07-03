@@ -30,10 +30,11 @@ async function seed() {
       [superHash],
     );
 
-    // Organization
+    // Organization — seeded as 'active' so the dev org_admin isn't locked out
+    // by the platform SubscriptionInterceptor
     const { rows: [org] } = await client.query(
-      `INSERT INTO organizations (name, currency)
-       VALUES ($1, $2)
+      `INSERT INTO organizations (name, currency, subscription_status)
+       VALUES ($1, $2, 'active')
        ON CONFLICT DO NOTHING
        RETURNING id`,
       ['Test Gym Chain', 'GBP'],

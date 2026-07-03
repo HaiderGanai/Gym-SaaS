@@ -4,6 +4,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Gym } from './entities/gym.entity';
+import { OrgSubscription } from '../platform-billing/entities/org-subscription.entity';
+import { SubscriptionStatus } from '../platform-billing/entities/subscription-status.enum';
 import { CreateGymDto } from './dto/create-gym.dto';
 import { UpdateGymDto } from './dto/update-gym.dto';
 import { StaffRole } from '../staff/entities/staff-user.entity';
@@ -14,6 +16,8 @@ export class GymService {
   constructor(
     @InjectRepository(Gym)
     private gymRepo: Repository<Gym>,
+    @InjectRepository(OrgSubscription)
+    private subRepo: Repository<OrgSubscription>,
   ) {}
 
   async create(dto: CreateGymDto, user: StaffJwtPayload): Promise<Gym> {
@@ -25,6 +29,7 @@ export class GymService {
       orgId = dto.organization_id;
     } else {
       orgId = user.org_id!;
+      await this.assertBranchQuota(orgId);
     }
 
     const gym = this.gymRepo.create({
@@ -77,6 +82,22 @@ export class GymService {
     }
     await this.gymRepo.remove(gym);
     return { message: 'Gym deleted successfully' };
+  }
+
+  // platform plan is priced per branch — block creating more gyms than paid for
+  // ponytail: orgs without a subscription row (seeded / super_admin-created) are not limited
+  private async assertBranchQuota(orgId: string): Promise<void> {
+    const sub = await this.subRepo.findOne({
+      where: { organization_id: orgId, status: In([SubscriptionStatus.ACTIVE, SubscriptionStatus.GRACE]) },
+      order: { created_at: 'DESC' },
+    });
+    if (!sub) return;
+    const count = await this.gymRepo.count({ where: { organization_id: orgId } });
+    if (count >= sub.branch_count) {
+      throw new ForbiddenException(
+        `Your plan covers ${sub.branch_count} branch(es). Upgrade via POST /platform/billing/quantity to add more.`,
+      );
+    }
   }
 
   private assertAccess(gym: Gym, user: StaffJwtPayload): void {

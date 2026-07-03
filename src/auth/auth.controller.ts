@@ -7,15 +7,26 @@ import { AcceptMemberInviteDto } from '../members/dto/accept-member-invite.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { OrgSignupDto } from './dto/org-signup.dto';
 import { Public } from './decorators/public.decorator';
+import { SkipSubscriptionCheck } from '../common/decorators/skip-subscription.decorator';
 import { StaffJwtGuard } from './guards/staff-jwt.guard';
 import { MemberJwtGuard } from './guards/member-jwt.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
+@SkipSubscriptionCheck() // auth must work even when the org subscription is locked
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
+
+  // ── Org self-signup (platform onboarding) ────────────────────────────────────
+
+  @Public()
+  @Post('org/signup')
+  orgSignup(@Body() dto: OrgSignupDto) {
+    return this.authService.orgSignup(dto);
+  }
 
   // ── Login ────────────────────────────────────────────────────────────────────
 

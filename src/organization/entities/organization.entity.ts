@@ -2,6 +2,7 @@
 import { Gym } from 'src/gym/entities/gym.entity';
 import { OrgReport } from 'src/reports/entities/org-report.entity';
 import { StaffUser } from 'src/staff/entities/staff-user.entity';
+import { SubscriptionStatus } from 'src/platform-billing/entities/subscription-status.enum';
 import { VatPeriodSummary } from 'src/vat/entities/vat-period-summary.entity';
 import {
   Entity, PrimaryGeneratedColumn, Column,
@@ -24,6 +25,14 @@ export class Organization {
 
   @Column({ nullable: true })
   stripe_customer_id!: string;
+
+  // denormalized copy of the live OrgSubscription status — cheap per-request guard checks
+  @Column({ type: 'enum', enum: SubscriptionStatus, default: SubscriptionStatus.PENDING })
+  subscription_status!: SubscriptionStatus;
+
+  // free-form theme blob (colors, fonts, sizes…) — frontend owns the shape
+  @Column({ type: 'jsonb', nullable: true })
+  branding!: Record<string, unknown> | null;
 
   @CreateDateColumn()
   created_at!: Date;

@@ -1,9 +1,14 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { StaffService } from '../staff/staff.service';
 import { MembersService } from '../members/members.service';
+import { Organization } from '../organization/entities/organization.entity';
+import { StaffUser, StaffRole } from '../staff/entities/staff-user.entity';
 import { StaffLoginDto } from './dto/staff-login.dto';
+import { OrgSignupDto } from './dto/org-signup.dto';
 import { MemberLoginDto } from './dto/member-login.dto';
 import { AcceptInviteDto } from './dto/accept-invite.dto';
 import { AcceptMemberInviteDto } from '../members/dto/accept-member-invite.dto';
@@ -20,7 +25,33 @@ export class AuthService {
     private staffService: StaffService,
     private membersService: MembersService,
     private jwtService: JwtService,
+    @InjectRepository(Organization) private orgRepo: Repository<Organization>,
+    @InjectRepository(StaffUser) private staffRepo: Repository<StaffUser>,
   ) {}
+
+  // ── Org self-signup (platform onboarding) ───────────────────────────────────
+  // Creates the organization (subscription_status: pending — dashboard locked
+  // until Stripe checkout completes) plus its org_admin, and logs them in.
+  async orgSignup(dto: OrgSignupDto): Promise<{ access_token: string; organization: Organization }> {
+    const existing = await this.staffService.findByEmail(dto.email);
+    if (existing) throw new ConflictException('Email already registered');
+
+    const org = await this.orgRepo.save(this.orgRepo.create({
+      name: dto.organization_name,
+      currency: dto.currency ?? 'GBP',
+    }));
+    const staff = await this.staffRepo.save(this.staffRepo.create({
+      organization_id: org.id,
+      email: dto.email,
+      password_hash: await bcrypt.hash(dto.password, 10),
+      role: StaffRole.ORG_ADMIN,
+    }));
+
+    const payload: StaffJwtPayload = {
+      sub: staff.id, email: staff.email, role: staff.role, org_id: org.id, gym_ids: [],
+    };
+    return { access_token: this.jwtService.sign(payload), organization: org };
+  }
 
   async loginStaff(dto: StaffLoginDto): Promise<{ access_token: string }> {
     const staff = await this.staffService.findByEmail(dto.email);

@@ -15,6 +15,7 @@ import { ClassScheduleModule } from './schedule/schedule.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { CommunicationModule } from './communication/communication.module';
 import { ReportsModule } from './reports/reports.module';
+import { PlatformBillingModule } from './platform-billing/platform-billing.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { ReportsModule } from './reports/reports.module';
     BookingsModule,
     CommunicationModule,
     ReportsModule,
+    PlatformBillingModule,
   ],
 })
 export class AppModule {}

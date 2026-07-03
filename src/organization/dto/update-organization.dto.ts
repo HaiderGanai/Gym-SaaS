@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MaxLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength, IsObject } from 'class-validator';
 
 export class UpdateOrganizationDto {
   @IsString()
@@ -14,4 +14,9 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @MaxLength(3)
   currency?: string;
+
+  // theme blob for the org's app (colors, fonts, sizes…) — shape owned by frontend
+  @IsObject()
+  @IsOptional()
+  branding?: Record<string, unknown>;
 }

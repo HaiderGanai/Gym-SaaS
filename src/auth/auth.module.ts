@@ -9,8 +9,11 @@ import { MemberJwtStrategy } from './strategies/member-jwt.strategy';
 import { StaffJwtGuard } from './guards/staff-jwt.guard';
 import { MemberJwtGuard } from './guards/member-jwt.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { StaffModule } from '../staff/staff.module';
 import { MembersModule } from '../members/members.module';
+import { Organization } from '../organization/entities/organization.entity';
+import { StaffUser } from '../staff/entities/staff-user.entity';
 
 @Module({
   imports: [
@@ -26,6 +29,7 @@ import { MembersModule } from '../members/members.module';
     }),
     StaffModule,
     MembersModule,
+    TypeOrmModule.forFeature([Organization, StaffUser]), // org self-signup
   ],
   controllers: [AuthController],
   providers: [

@@ -89,6 +89,31 @@ export class MailService {
     }
   }
 
+  // daysLeft > 0 → grace-period reminder; daysLeft === 0 → expired notice
+  async sendSubscriptionReminder(toEmail: string, orgName: string, daysLeft: number): Promise<void> {
+    const expired = daysLeft <= 0;
+    const subject = expired
+      ? `${orgName}: subscription expired — dashboard access locked`
+      : `${orgName}: payment needed — ${daysLeft} day${daysLeft === 1 ? '' : 's'} of grace left`;
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject,
+        html: `
+          <h2>${expired ? 'Subscription expired' : 'Subscription payment overdue'}</h2>
+          <p>${expired
+            ? `The subscription for <strong>${orgName}</strong> has expired and dashboard access is now locked.`
+            : `We could not collect the renewal payment for <strong>${orgName}</strong>. You have <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong> left before dashboard access is locked.`}</p>
+          <p>Please update your payment method or renew from the billing page to ${expired ? 'restore' : 'keep'} access.</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send subscription reminder to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send subscription reminder email');
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';
