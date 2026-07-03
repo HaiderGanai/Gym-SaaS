@@ -1,4 +1,5 @@
-import { IsString, IsOptional, MaxLength, IsObject } from 'class-validator';
+import { IsString, IsOptional, MaxLength, IsObject, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class UpdateOrganizationDto {
   @IsString()
@@ -15,7 +16,15 @@ export class UpdateOrganizationDto {
   @MaxLength(3)
   currency?: string;
 
-  // theme blob for the org's app (colors, fonts, sizes…) — shape owned by frontend
+  // accent color hex — stored as branding.accent
+  @IsString()
+  @IsOptional()
+  @Matches(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, { message: 'accent must be a hex color like #F59E0B' })
+  accent?: string;
+
+  // theme blob for the org's app (colors, fonts, sizes…) — shape owned by frontend.
+  // Arrives as a JSON string on multipart requests (logo upload) — parse it.
+  @Transform(({ value }) => (typeof value === 'string' ? JSON.parse(value) : value))
   @IsObject()
   @IsOptional()
   branding?: Record<string, unknown>;
