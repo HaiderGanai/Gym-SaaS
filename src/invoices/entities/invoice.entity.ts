@@ -64,6 +64,10 @@ export class Invoice {
   @Column({ nullable: true })
   invoice_number!: string;       // e.g. INV-2024-00142, sequential per gym
 
+  // manual billing v1: how the front desk collected ('cash' | 'card' | 'other')
+  @Column({ nullable: true })
+  payment_method!: string;
+
   @Column({ nullable: true })
   stripe_payment_intent_id!: string;
 

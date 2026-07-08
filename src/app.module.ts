@@ -16,6 +16,8 @@ import { BookingsModule } from './bookings/bookings.module';
 import { CommunicationModule } from './communication/communication.module';
 import { ReportsModule } from './reports/reports.module';
 import { PlatformBillingModule } from './platform-billing/platform-billing.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -51,5 +53,7 @@ import { PlatformBillingModule } from './platform-billing/platform-billing.modul
     ReportsModule,
     PlatformBillingModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

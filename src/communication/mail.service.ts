@@ -114,6 +114,41 @@ export class MailService {
     }
   }
 
+  async sendInvoiceEmail(
+    toEmail: string,
+    name: string,
+    invoice: {
+      invoice_number: string; status: string; amount: number;
+      net_amount: number; tax_amount: number; tax_rate: number;
+      currency: string; created_at: Date;
+    },
+    gymName: string,
+  ): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `Invoice ${invoice.invoice_number} — ${gymName}`,
+        html: `
+          <h2>Hi ${name},</h2>
+          <p>Here is your invoice from <strong>${gymName}</strong>.</p>
+          <table style="border-collapse:collapse">
+            <tr><td style="padding:4px 16px 4px 0">Invoice</td><td><strong>${invoice.invoice_number}</strong></td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Date</td><td>${new Date(invoice.created_at).toDateString()}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Status</td><td>${invoice.status.toUpperCase()}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Net</td><td>${invoice.currency} ${Number(invoice.net_amount).toFixed(2)}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">VAT (${Number(invoice.tax_rate)}%)</td><td>${invoice.currency} ${Number(invoice.tax_amount).toFixed(2)}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0"><strong>Total</strong></td><td><strong>${invoice.currency} ${Number(invoice.amount).toFixed(2)}</strong></td></tr>
+          </table>
+          <p>Questions? Reply to this email or ask at the front desk.</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send invoice email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send invoice email');
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';

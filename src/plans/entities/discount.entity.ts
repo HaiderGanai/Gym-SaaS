@@ -40,6 +40,10 @@ export class Discount {
   @Column({ type: 'date', nullable: true })
   expires_at!: Date;
 
+  // soft delete — rows may be referenced by member_subscriptions.discount_id
+  @Column({ default: true })
+  is_active!: boolean;
+
   @CreateDateColumn()
   created_at!: Date;
 }

@@ -64,7 +64,7 @@ export class StaffController {
   }
 
   @Delete(':id/gym-access/:gymId')
-  @Roles(StaffRole.ORG_ADMIN)
+  @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER)
   revokeGymAccess(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('gymId', ParseUUIDPipe) gymId: string,

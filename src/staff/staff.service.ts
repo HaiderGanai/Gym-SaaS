@@ -242,6 +242,10 @@ export class StaffService {
     if (user.role === StaffRole.ORG_ADMIN && staff.organization_id !== user.org_id) {
       throw new ForbiddenException('Access denied');
     }
+    // mirrors grantGymAccess: managers manage access only at their own branches
+    if (user.role === StaffRole.GYM_MANAGER && !user.gym_ids.includes(gymId)) {
+      throw new ForbiddenException('Gym managers can only revoke access to their own assigned gyms');
+    }
 
     const access = await this.accessRepo.findOne({
       where: { staff_id: staffId, gym_id: gymId, is_active: true },
