@@ -124,13 +124,15 @@ export class PlatformBillingService {
     }
 
     const customerId = await this.ensureCustomer(org, user.email);
-    const frontend = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:3001';
+    const frontend = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
     const session = await this.stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId,
       line_items: [{ price: plan.stripe_price_id, quantity: dto.branch_count }],
-      success_url: `${frontend}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${frontend}/billing/cancelled`,
+      // success_url: `${frontend}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${frontend}/dashboard`,
+      // cancel_url: `${frontend}/billing/cancelled`,
+      cancel_url: `${frontend}/signup`,
       metadata: { organization_id: org.id, plan_id: plan.id, branch_count: String(dto.branch_count) },
       subscription_data: { metadata: { organization_id: org.id, plan_id: plan.id } },
     });
