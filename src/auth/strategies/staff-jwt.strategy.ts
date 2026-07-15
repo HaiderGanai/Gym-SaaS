@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +15,8 @@ export class StaffJwtStrategy extends PassportStrategy(Strategy, 'staff-jwt') {
   }
 
   validate(payload: StaffJwtPayload): StaffJwtPayload {
+    // member tokens have no `role`; reject them so a member JWT can't pass staff guards
+    if (!payload.role) throw new UnauthorizedException();
     return payload;
   }
 }

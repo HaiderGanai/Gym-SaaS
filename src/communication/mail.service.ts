@@ -149,6 +149,36 @@ export class MailService {
     }
   }
 
+  // sent to every confirmed/waitlisted member when staff disable a slot
+  async sendSlotDisabled(
+    toEmail: string,
+    memberName: string,
+    activityName: string,
+    startsAt: Date,
+    gymName: string,
+  ): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `Class cancelled: ${activityName} — ${gymName}`,
+        html: `
+          <h2>Hi ${memberName},</h2>
+          <p>Unfortunately, the following class you were booked into has been cancelled:</p>
+          <p style="padding:12px 16px;background:#fef2f2;border-radius:8px">
+            <strong>${activityName}</strong><br/>
+            ${new Date(startsAt).toUTCString()}<br/>
+            ${gymName}
+          </p>
+          <p>We're sorry for the inconvenience — please check the app to book another session.</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send slot-disabled email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send slot-disabled email');
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';

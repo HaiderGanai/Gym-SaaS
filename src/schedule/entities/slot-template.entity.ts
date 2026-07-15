@@ -38,6 +38,10 @@ export class SlotTemplate {
   @Column()
   rrule!: string;
 
+  // each occurrence runs this long from its DTSTART-derived start time
+  @Column({ default: 60 })
+  duration_minutes!: number;
+
   @Column({ default: 24 })
   booking_window_hours!: number;
 

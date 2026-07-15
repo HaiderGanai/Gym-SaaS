@@ -57,6 +57,14 @@ export class Slot {
   @Column({ default: 0 })
   booking_count!: number;
 
+  // snapshotted from template at generation (or set directly on one-off slots)
+  // so booking rules are always read off the slot itself
+  @Column({ default: 24 })
+  booking_window_hours!: number;
+
+  @Column({ default: 2 })
+  cancellation_cutoff_hours!: number;
+
   @Column({ type: 'enum', enum: SlotStatus, default: SlotStatus.ENABLED })
   status!: SlotStatus;
 

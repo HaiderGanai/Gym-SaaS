@@ -2,7 +2,9 @@
 
 ## 1. Project Overview
 
-Multi-tenant gym management SaaS. A single deployment serves multiple fitness organizations (e.g., a gym chain). Each organization owns one or more gym branches. The platform handles staff management, member onboarding, class scheduling and bookings, membership subscriptions, invoicing with VAT, and AI-generated reports.
+Multi-tenant gym management SaaS built by InfinityBits. A single deployment serves multiple fitness organizations (e.g., a gym chain). Each organization owns one or more gym branches. The platform handles staff management, member onboarding, class scheduling and bookings, membership subscriptions, invoicing with VAT, and AI-generated reports.
+
+**Platform ownership**: A `super_admin` role (platform-level, no org affiliation) sits above all organizations and can see across all tenants.
 
 ## 2. Tech Stack
 
@@ -11,21 +13,30 @@ Multi-tenant gym management SaaS. A single deployment serves multiple fitness or
 | Runtime | Node.js (TypeScript) |
 | Framework | NestJS 11 |
 | Database | PostgreSQL |
-| ORM | TypeORM (autoLoadEntities, synchronize off in production) |
+| ORM | TypeORM 1.x (autoLoadEntities, synchronize off in production) |
 | Auth | Passport.js + passport-jwt, @nestjs/jwt |
 | Password hashing | bcrypt |
 | Validation | class-validator + class-transformer |
+| Email | Nodemailer (Gmail SMTP) |
+| Payments (platform) | Stripe (Checkout + Subscriptions + webhooks) |
 | Scheduling | @nestjs/schedule (cron) |
+| Recurrence | rrule (RFC 5545 expansion for class templates) |
 | Config | @nestjs/config (env vars) |
 
-### Required packages not yet in package.json
-Run before starting the server:
+## 3. Role Hierarchy
+
 ```
-npm install @nestjs/jwt @nestjs/passport passport passport-jwt bcrypt class-validator class-transformer
-npm install -D @types/passport-jwt @types/bcrypt
+super_admin          ← platform owner; no org_id in JWT; bypasses all @Roles checks
+  └── org_admin      ← full control of one organization + all its branches
+        └── gym_manager   ← manages a single branch
+              └── front_desk    ← check-in, member look-up, POS
 ```
 
-## 3. Tenant Hierarchy
+- `super_admin` has `organization_id = NULL` in DB and `org_id = null` in JWT.
+- `RolesGuard` short-circuits to `true` for `super_admin` before checking `@Roles(...)`.
+- `org_admin` bypasses `StaffGymAccess` checks — org-wide authority without junction rows.
+
+## 4. Tenant Hierarchy
 
 ```
 Organization
@@ -34,153 +45,339 @@ Organization
         └── Member     ←→ Gym via MemberGymAccess (many-to-many)
 ```
 
-- **Organization** is the root tenant. Every StaffUser and Gym belongs to one Organization.
+- **Organization** is the root tenant.
 - **Gym** is the operational unit. Plans, slots, invoices, subscriptions, and reports all carry a `gym_id`.
-- `org_owner` and `org_admin` roles bypass the StaffGymAccess junction at the guard level — they have org-wide access without needing junction rows.
 
-## 4. Module Map
+## 5. Module Map
 
 | Module | Responsibility |
 |---|---|
 | `OrganizationModule` | CRUD for organizations; org-level settings |
 | `GymModule` | CRUD for gym branches; VAT number, branch details |
-| `StaffModule` | Staff user management; invite flow; gym access grants |
-| `AuthModule` | JWT issue and validation; login endpoints; invite acceptance |
-| `MembersModule` | Member registration; gym access; waiver tracking |
+| `StaffModule` | Staff invite flow; gym access grants |
+| `AuthModule` | JWT issue/validation; all login + invite-accept endpoints |
+| `MembersModule` | Member registration; invite flow; waiver signing; gym access |
 | `PlansModule` | MembershipPlan CRUD; Discount codes per gym |
 | `SubscriptionsModule` | Create/pause/cancel member subscriptions |
 | `InvoicesModule` | Invoice generation; dunning queue; status transitions |
 | `VatModule` | VAT calculation; VatPeriodSummary aggregation per gym |
 | `ClassScheduleModule` | SlotTemplate (RRULE) management; Slot instance generation |
 | `BookingsModule` | Booking creation; waitlist; QR check-in via signed JWT |
-| `CommunicationModule` | Email + push notifications; NotificationLog |
+| `CommunicationModule` | Email (Nodemailer); push notifications; NotificationLog |
 | `ReportsModule` | AI daily report per gym (Gemini); monthly org-level report |
+| `PlatformBillingModule` | **Platform-level billing**: orgs pay the super_admin via Stripe. Platform plans (monthly/quarterly/yearly, priced per branch), checkout, webhooks, payment-method CRUD, grace-period cron, subscription lock (SubscriptionInterceptor) |
 
-## 5. Build Status
+## 6. Build Status
 
 ### Complete
-- [x] **All 18 entities** — finalized, do not modify
-- [x] **AuthModule** — JWT login for staff and members, invite acceptance, guards, decorators
-- [x] **StaffModule (partial)** — `POST /staff/invite` with email via Nodemailer; auth-support methods
-- [x] **MembersModule (partial)** — `POST /members/register`; auth-support methods
-- [x] **CommunicationModule (partial)** — `MailService` for Nodemailer (Gmail); exports to StaffModule
+- [x] **All entities** — see entity list below; `invite_token` + `invite_expires_at` added to Member
+- [x] **AuthModule** — staff login, member login, staff invite accept, member invite accept
+- [x] **StaffModule (partial)** — `POST /staff/invite` (org_admin / gym_manager)
+- [x] **MembersModule (partial)** — self-register, staff-invite flow, waiver signing
+- [x] **CommunicationModule (partial)** — `MailService` (staff invite email, member invite email)
+- [x] **OrganizationModule** — full CRUD (5 endpoints); super_admin creates/lists/deletes, org_admin reads/updates own org
+- [x] **GymModule** — full CRUD (5 endpoints); role-scoped list; org_admin + gym_manager can update; only super_admin/org_admin can delete
+- [x] **StaffModule (expanded)** — list, profile, update role/active, grant/revoke gym access (6 endpoints total)
+- [x] **MembersModule (expanded)** — list members, member profile (staff), member self-profile + self-update, update member status/pause/cancel (8 endpoints total)
+- [x] **PlatformBillingModule** — org self-signup, platform plan CRUD (Stripe Product/Price), Stripe Checkout, webhook handling, payment-method CRUD, branch-quantity upgrades, cancel, super_admin subscription admin, 3-day grace period with daily reminder cron, org branding (jsonb), subscription access lock
+- [x] **Member billing chain (manual v1)** — PlansModule (plan + discount CRUD), SubscriptionsModule (staff-led subscribe with promo code, renew, pause/resume/cancel, daily past_due cron), InvoicesModule (auto-generated per period, manual pay/refund/resend, VAT breakdown, per-gym invoice numbers), VatModule (tax calc, stored per-gym period summaries, live org rollup). No member payment processor — front desk collects cash/card and marks invoices paid. See `MEMBER_BILLING_MODULE_OVERVIEW.md` + `MEMBER_BILLING_POSTMAN_ENDPOINTS.md`.
+- [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. Bookings themselves are the next module. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
 
 ### Active Endpoints
 
-| Method | Path | Guard | Who calls it |
-|---|---|---|---|
-| POST | `/auth/staff/login` | Public | Staff client |
-| POST | `/auth/member/login` | Public | Member mobile app |
-| POST | `/auth/staff/invite/accept` | Public | Staff (via invite email link) |
-| POST | `/staff/invite` | StaffJwtGuard + RolesGuard (owner/admin/manager) | Authenticated staff |
-| POST | `/members/register` | Public | Member mobile app / front desk |
+All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/api/v1`.
 
-### Files delivered
+| Method | Path | Guard | Who |
+|---|---|---|---|
+| POST | `/auth/staff/login` | Public | Any staff |
+| POST | `/auth/member/login` | Public | Any member |
+| POST | `/auth/staff/invite/accept` | Public | Invited staff (via email link) |
+| POST | `/auth/member/invite/accept` | Public | Invited member (via email link) |
+| POST | `/auth/staff/forgot-password` | Public | Any staff — sends 6-digit OTP to email |
+| POST | `/auth/staff/reset-password` | Public | `{ email, otp, password }` — verifies OTP, resets |
+| POST | `/auth/staff/change-password/send-otp` | StaffJwt | Sends OTP to logged-in staff's email |
+| POST | `/auth/staff/change-password` | StaffJwt | `{ otp, new_password }` — verifies OTP, changes |
+| POST | `/auth/member/forgot-password` | Public | Any member — sends 6-digit OTP to email |
+| POST | `/auth/member/reset-password` | Public | `{ email, otp, password }` — verifies OTP, resets |
+| POST | `/auth/member/change-password/send-otp` | MemberJwt | Sends OTP to logged-in member's email |
+| POST | `/auth/member/change-password` | MemberJwt | `{ otp, new_password }` — verifies OTP, changes |
+| POST | `/staff/invite` | StaffJwt + Roles(org_admin, gym_manager) | Authenticated staff |
+| POST | `/members/register` | Public | Self-registering member |
+| POST | `/members/invite` | StaffJwt + Roles(gym_manager, front_desk) | Staff inviting a member |
+| POST | `/members/waiver` | MemberJwt | Authenticated member |
+| POST | `/organizations` | StaffJwt + Roles(super_admin) | Create org |
+| GET | `/organizations` | StaffJwt + Roles(super_admin) | List all orgs |
+| GET | `/organizations/:id` | StaffJwt + Roles(org_admin) | super_admin or own org_admin |
+| PATCH | `/organizations/:id` | StaffJwt + Roles(org_admin) | super_admin or own org_admin |
+| DELETE | `/organizations/:id` | StaffJwt + Roles(super_admin) | super_admin only |
+| POST | `/gyms` | StaffJwt + Roles(org_admin) | super_admin (needs org_id in body) or org_admin |
+| GET | `/gyms` | StaffJwt | All staff — result scoped by role |
+| GET | `/gyms/:id` | StaffJwt | All staff — service checks access |
+| PATCH | `/gyms/:id` | StaffJwt + Roles(org_admin, gym_manager) | super_admin, org_admin (own org), gym_manager (assigned) |
+| DELETE | `/gyms/:id` | StaffJwt + Roles(org_admin) | super_admin or org_admin (own org) |
+| GET | `/staff` | StaffJwt | All staff — result scoped by role |
+| GET | `/staff/:id` | StaffJwt | super_admin, org_admin (own org), gym colleagues, self |
+| PATCH | `/staff/:id` | StaffJwt + Roles(org_admin) | Update role / deactivate; org_admin cannot promote to super_admin |
+| POST | `/staff/:id/gym-access` | StaffJwt + Roles(org_admin, gym_manager) | Grant gym access; gym_manager limited to own gyms |
+| DELETE | `/staff/:id/gym-access/:gymId` | StaffJwt + Roles(org_admin, gym_manager) | Revoke gym access; gym_manager limited to own gyms; sets is_active=false + revoked_at |
+| GET | `/members` | StaffJwt | All staff — result scoped by role (super_admin=all, org_admin=own org gyms, gym_manager/front_desk=assigned gyms) |
+| GET | `/members/me` | MemberJwt | Member views own profile + active gym access |
+| GET | `/members/:id` | StaffJwt | Staff views member profile + full gym access history |
+| PATCH | `/members/me` | MemberJwt | Member updates own full_name / phone / photo_url |
+| PATCH | `/members/:id/status` | StaffJwt + Roles(org_admin, gym_manager) | Pause (with dates) / cancel / reactivate member |
+| POST | `/auth/org/signup` | Public | Org self-signup: creates Organization (`pending`) + org_admin, returns JWT |
+| GET | `/platform/plans` | Public | List active platform plans (pricing page) |
+| GET | `/platform/plans/all` | StaffJwt + Roles(super_admin) | All plans incl. deactivated |
+| POST | `/platform/plans` | StaffJwt + Roles(super_admin) | Create plan → creates Stripe Product + Price |
+| PATCH | `/platform/plans/:id` | StaffJwt + Roles(super_admin) | Rename / reprice (new Stripe Price) / toggle active |
+| DELETE | `/platform/plans/:id` | StaffJwt + Roles(super_admin) | Deactivate plan (soft) |
+| POST | `/platform/billing/checkout` | StaffJwt + Roles(org_admin) | `{ plan_id, branch_count }` → Stripe Checkout URL |
+| GET | `/platform/billing/subscription` | StaffJwt + Roles(org_admin) | Own org's current subscription + plan |
+| POST | `/platform/billing/quantity` | StaffJwt + Roles(org_admin) | `{ branch_count }` — upgrade/downgrade paid branches (Stripe prorates) |
+| POST | `/platform/billing/cancel` | StaffJwt + Roles(org_admin) | Cancel at period end |
+| GET | `/platform/billing/payment-methods` | StaffJwt + Roles(org_admin) | List saved cards |
+| POST | `/platform/billing/payment-methods` | StaffJwt + Roles(org_admin) | `{ payment_method_id, set_default? }` — attach card |
+| PATCH | `/platform/billing/payment-methods/:id/default` | StaffJwt + Roles(org_admin) | Set default card |
+| DELETE | `/platform/billing/payment-methods/:id` | StaffJwt + Roles(org_admin) | Detach card |
+| POST | `/platform/billing/webhook` | Public (Stripe signature) | Stripe events: checkout completed, invoice paid/failed, sub updated/deleted |
+| GET | `/platform/subscriptions` | StaffJwt + Roles(super_admin) | All org subscriptions (orgs + plans) |
+| PATCH | `/platform/subscriptions/:id` | StaffJwt + Roles(super_admin) | Comp/extend (`extend_days`) or force `status` |
+| POST | `/plans` | StaffJwt + Roles(org_admin) | Create membership plan for a gym |
+| GET | `/plans` | StaffJwt | List plans (scoped); `?gym_id=`, `?include_archived=true` |
+| GET | `/plans/:id` | StaffJwt | Single plan |
+| PATCH | `/plans/:id` | StaffJwt + Roles(org_admin) | Update; response includes `active_subscriptions` count |
+| DELETE | `/plans/:id` | StaffJwt + Roles(org_admin) | Archive (soft) |
+| POST | `/discounts` | StaffJwt + Roles(org_admin) | Create promo code (percentage/fixed) per gym |
+| GET | `/discounts` | StaffJwt | List discounts (scoped); `?gym_id=` |
+| PATCH | `/discounts/:id` | StaffJwt + Roles(org_admin) | Update value/max_uses/expires_at/is_active |
+| DELETE | `/discounts/:id` | StaffJwt + Roles(org_admin) | Deactivate (soft — subscriptions reference it) |
+| POST | `/subscriptions` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Subscribe member to plan; auto-creates first invoice; `discount_code?`, `mark_paid?`, `payment_method?` |
+| GET | `/subscriptions` | StaffJwt | List (scoped); `?gym_id=&member_id=&status=` |
+| GET | `/subscriptions/me` | MemberJwt | Member's own subscriptions + plan |
+| GET | `/subscriptions/:id` | StaffJwt | Detail with plan/member/discount/invoices |
+| POST | `/subscriptions/:id/renew` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Advance period + next invoice (full price, no promo) |
+| PATCH | `/subscriptions/:id/pause` | StaffJwt + Roles(org_admin, gym_manager) | active → paused |
+| PATCH | `/subscriptions/:id/resume` | StaffJwt + Roles(org_admin, gym_manager) | paused → active |
+| PATCH | `/subscriptions/:id/cancel` | StaffJwt + Roles(org_admin, gym_manager) | → cancelled (permanent) |
+| GET | `/invoices` | StaffJwt | List (scoped); `?gym_id=&member_id=&status=` |
+| GET | `/invoices/me` | MemberJwt | Member's own invoice history |
+| GET | `/invoices/:id` | StaffJwt | Full detail: member, subscription+plan, gym, VAT breakdown |
+| PATCH | `/invoices/:id/pay` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Manual mark-paid `{ payment_method?: cash\|card\|other }`; re-activates past_due sub |
+| PATCH | `/invoices/:id/refund` | StaffJwt + Roles(org_admin) | paid → refunded |
+| POST | `/invoices/:id/resend` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Email invoice to member |
+| POST | `/vat/summaries` | StaffJwt + Roles(org_admin) | Generate stored period summary from paid invoices |
+| GET | `/vat/summaries` | StaffJwt + Roles(org_admin, gym_manager) | List summaries (scoped); `?gym_id=` |
+| PATCH | `/vat/summaries/:id/file` | StaffJwt + Roles(org_admin) | Mark filed (`is_filed` + `filed_at`) |
+| GET | `/vat/org-rollup` | StaffJwt + Roles(org_admin) | Live org-wide rollup; `?period_start=&period_end=` |
+| POST | `/schedule/templates` | StaffJwt + Roles(org_admin, gym_manager) | Create recurring template; materializes slots (default 30 days, `generate_until?`) |
+| GET | `/schedule/templates` | StaffJwt | List templates (scoped); `?gym_id=`, `?include_inactive=true` |
+| GET | `/schedule/templates/:id` | StaffJwt | Single template with instructor |
+| PATCH | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Update; `apply_to_future: true` propagates to future slots (timing changes regenerate empty slots, booked ones kept) |
+| DELETE | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Deactivate (soft); removes future empty slots, keeps booked |
+| POST | `/schedule/templates/:id/generate` | StaffJwt + Roles(org_admin, gym_manager) | `{ until }` — extend materialized window (idempotent, max 366 days) |
+| POST | `/schedule/slots` | StaffJwt + Roles(org_admin, gym_manager) | One-off custom slot; 409 on instructor overlap |
+| GET | `/schedule/slots` | StaffJwt | Calendar (scoped); `?gym_id=&from=&to=&status=&template_id=` (default today → +30d) |
+| GET | `/schedule/slots/browse` | MemberJwt | Enabled future slots in member's gyms + `spots_remaining`/`is_full`/`booking_open` etc. |
+| GET | `/schedule/slots/:id` | StaffJwt | Slot detail + roster preview (bookings with member info) |
+| PATCH | `/schedule/slots/:id` | StaffJwt + Roles(org_admin, gym_manager) | Edit this occurrence only; 409 if capacity < bookings or instructor overlap |
+| PATCH | `/schedule/slots/:id/disable` | StaffJwt + Roles(org_admin, gym_manager) | Disable + email confirmed/waitlisted members |
+| PATCH | `/schedule/slots/:id/enable` | StaffJwt + Roles(org_admin, gym_manager) | Re-enable |
+| DELETE | `/schedule/slots/:id` | StaffJwt + Roles(org_admin, gym_manager) | Hard delete — only when slot has zero bookings |
+
+### Key files
 
 ```
-src/auth/                          ← AuthModule (complete)
-  auth.module.ts
-  auth.controller.ts
-  auth.service.ts
-  strategies/staff-jwt.strategy.ts
-  strategies/member-jwt.strategy.ts
-  guards/staff-jwt.guard.ts
-  guards/member-jwt.guard.ts
-  guards/roles.guard.ts
-  decorators/public.decorator.ts
-  decorators/roles.decorator.ts
-  decorators/current-user.decorator.ts
-  dto/staff-login.dto.ts
-  dto/member-login.dto.ts
-  dto/accept-invite.dto.ts
+src/auth/
+  auth.module.ts, auth.controller.ts, auth.service.ts
+  strategies/staff-jwt.strategy.ts, member-jwt.strategy.ts
+  guards/staff-jwt.guard.ts, member-jwt.guard.ts, roles.guard.ts
+  decorators/public.decorator.ts, roles.decorator.ts, current-user.decorator.ts
+  dto/staff-login.dto.ts, member-login.dto.ts, accept-invite.dto.ts
 
-src/common/interfaces/
-  jwt-payload.interface.ts
+src/common/interfaces/jwt-payload.interface.ts
 
-src/staff/                         ← StaffModule (partial)
-  staff.module.ts
-  staff.controller.ts              ← POST /staff/invite
-  staff.service.ts
+src/staff/
+  staff.module.ts, staff.controller.ts, staff.service.ts
+  entities/staff-user.entity.ts, staff-gym-access.entity.ts
   dto/invite-staff.dto.ts
 
-src/members/                       ← MembersModule (partial)
-  members.module.ts
-  members.controller.ts            ← POST /members/register
-  members.service.ts
-  dto/register-member.dto.ts
+src/members/
+  members.module.ts, members.controller.ts, members.service.ts
+  entities/member.entity.ts, member-gym-access.entity.ts, waiver.entity.ts
+  dto/register-member.dto.ts, invite-member.dto.ts,
+      accept-member-invite.dto.ts, sign-waiver.dto.ts,
+      update-member.dto.ts, update-member-status.dto.ts
 
-src/communication/                 ← CommunicationModule (partial)
+src/communication/
   communication.module.ts
-  mail.service.ts                  ← Nodemailer, Gmail SMTP
+  mail.service.ts   ← sendStaffInvite, sendMemberInvite
 
-src/main.ts                        ← ValidationPipe registered globally
+src/staff/
+  staff.module.ts, staff.controller.ts, staff.service.ts
+  entities/staff-user.entity.ts, staff-gym-access.entity.ts
+  dto/invite-staff.dto.ts, update-staff.dto.ts, grant-gym-access.dto.ts
+
+src/organization/
+  organization.module.ts, organization.controller.ts, organization.service.ts
+  entities/organization.entity.ts
+  dto/create-organization.dto.ts, update-organization.dto.ts
+
+src/gym/
+  gym.module.ts, gym.controller.ts, gym.service.ts
+  entities/gym.entity.ts
+  dto/create-gym.dto.ts, update-gym.dto.ts
+
+src/platform-billing/
+  platform-billing.module.ts, platform-billing.controller.ts, platform-billing.service.ts
+  subscription.interceptor.ts          ← global APP_INTERCEPTOR: locks dashboard when org not active/grace
+  entities/platform-plan.entity.ts, org-subscription.entity.ts, subscription-status.enum.ts
+  dto/create-plan.dto.ts, update-plan.dto.ts, checkout.dto.ts, update-quantity.dto.ts,
+      attach-payment-method.dto.ts, admin-update-subscription.dto.ts
+
+src/common/decorators/skip-subscription.decorator.ts  ← @SkipSubscriptionCheck() (on AuthController + PlatformBillingController)
+src/auth/dto/org-signup.dto.ts        ← org self-signup
+
+src/plans/
+  plans.module.ts, plans.controller.ts, plans.service.ts   ← routes: /plans + /discounts
+  entities/membership-plan.entity.ts, discount.entity.ts
+  dto/create-plan.dto.ts, update-plan.dto.ts, create-discount.dto.ts, update-discount.dto.ts
+
+src/subscriptions/
+  subscriptions.module.ts, subscriptions.controller.ts, subscriptions.service.ts  ← past_due cron (8:00 daily)
+  entities/member-subscription.entity.ts
+  dto/create-subscription.dto.ts, renew-subscription.dto.ts
+
+src/invoices/
+  invoices.module.ts, invoices.controller.ts, invoices.service.ts  ← createForSubscription() exported; invoice numbering
+  entities/invoice.entity.ts
+  dto/mark-paid.dto.ts
+
+src/vat/
+  vat.module.ts, vat.controller.ts, vat.service.ts  ← computeTax() exported; summaries + org rollup
+  entities/vat-period-summary.entity.ts
+  dto/generate-vat-summary.dto.ts
+
+src/schedule/
+  schedule.module.ts, schedule.controller.ts, schedule.service.ts  ← materialize() + horizonCron (2:00 daily)
+  rrule.util.ts  ← expandRrule() (validates DTSTART presence); rrule.util.spec.ts
+  entities/slot-template.entity.ts (+ duration_minutes), slot.entity.ts (+ booking_window_hours, cancellation_cutoff_hours)
+  dto/create-template.dto.ts, update-template.dto.ts, generate-slots.dto.ts,
+      create-slot.dto.ts, update-slot.dto.ts
+
+src/common/utils/gym-scope.ts  ← scopedGymIds() / assertGymAccess() — shared staff gym-scoping helpers
+
+src/main.ts   ← global ValidationPipe, setGlobalPrefix('api/v1'), rawBody:true (Stripe webhook)
+seed.js       ← creates super_admin + org + gym + org_admin; run with node seed.js
 ```
 
-## 6. Pending Modules
+## 7. Pending Modules
 
-- [ ] OrganizationModule — controller + service (entity exists)
-- [ ] GymModule — controller + service (entity exists)
-- [ ] StaffModule — expand: gym access management, staff list, profile, revoke access
-- [ ] MembersModule — expand: waiver upload, member list/search, pause/cancel, profile edit
-- [ ] PlansModule — MembershipPlan and Discount CRUD
-- [ ] SubscriptionsModule — subscription lifecycle; note: add `discount_id` FK to MemberSubscription before implementing
-- [ ] InvoicesModule — invoice generation; snapshot vat_number + invoice_number at creation
-- [ ] VatModule — VatPeriodSummary aggregation; org rollup is a query not a stored record
-- [ ] ClassScheduleModule — RRULE-based SlotTemplate; Slot instance generation
-- [ ] BookingsModule — waitlist via `waitlist_position`; QR token is a signed JWT (booking_id + member_id + slot_id)
-- [ ] CommunicationModule — expand: PushService, NotificationLog, email templates for other flows
-- [ ] ReportsModule — AiReport (daily, per gym, via Gemini); OrgReport (monthly, aggregates all gyms)
+- [x] OrganizationModule — complete
+- [x] GymModule — complete
+- [x] StaffModule — expanded: list, profile, update, gym access grant/revoke
+- [x] MembersModule — expanded: list, self-profile, staff profile view, self-update, status management
+- [x] PlansModule — MembershipPlan and Discount CRUD (soft archive/deactivate)
+- [x] SubscriptionsModule — staff-led create + first invoice, renew, pause/resume/cancel, past_due cron
+- [x] InvoicesModule — auto-generated, manual pay/refund/resend, vat_number + invoice_number snapshotted
+- [x] VatModule — computeTax(), VatPeriodSummary generation + filing; org rollup is a live query
+- [x] ClassScheduleModule — RRULE templates, slot materialization + cron, occurrence-level edits, disable/enable with notifications, member browse
+- [ ] BookingsModule — waitlist via `waitlist_position`; QR token = signed JWT (booking_id + member_id + slot_id)
+- [ ] CommunicationModule — expand: PushService, NotificationLog, more email templates
+- [ ] ReportsModule — AiReport (daily, per gym, Gemini); OrgReport (monthly, all gyms)
 
-## 7. Key Architectural Decisions
+## 8. Key Architectural Decisions
+
+**Platform billing is a separate layer from member billing**
+`PlatformBillingModule` handles the org → super_admin money flow (SaaS subscription). The reserved `PlansModule` / `SubscriptionsModule` / `InvoicesModule` remain member → gym billing and share nothing with it. `PlatformPlan` ≠ `MembershipPlan`; `OrgSubscription` ≠ `MemberSubscription`.
+
+**Stripe Checkout + webhooks, auto-renewing**
+Orgs pay on a Stripe-hosted Checkout page (mode: subscription, quantity = branch count). The webhook (`checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated/deleted`) is the source of truth for status transitions. Stripe SDK v22: `current_period_end` is read from subscription items with a fallback (`periodEnd()` helper), and `invoice.subscription` via `invoiceSubId()` helper.
+
+**Subscription lock is an interceptor, not a guard**
+Global guards run before route-level JWT guards (so `request.user` wouldn't exist yet). `SubscriptionInterceptor` is registered as a global `APP_INTERCEPTOR` and runs after guards: org staff of a non-`active`/`grace` org get 403 on everything except routes tagged `@SkipSubscriptionCheck()` (auth + platform billing). Members and super_admin pass untouched. `Organization.subscription_status` is a denormalized copy of the live `OrgSubscription.status` for this per-request check.
+
+**Grace period: 3 days, daily reminders**
+`invoice.payment_failed` → status `grace`, `grace_ends_at = +3 days`, access retained. Daily 9:00 cron (`graceCron`) emails every org_admin a countdown reminder, expires subs whose grace lapsed (locks dashboard), and safety-nets lapsed `active` subs whose webhook was missed.
+
+**Branch-count pricing via Stripe quantity**
+One Stripe Price per plan; checkout quantity = branches paid for. `GymService.create` blocks creating more gyms than `OrgSubscription.branch_count` (orgs without a sub row — e.g. seeded — are not limited). `POST /platform/billing/quantity` updates the Stripe subscription with proration.
+
+**Org branding is a jsonb blob**
+`Organization.branding` (jsonb) holds the org's app theme (colors, fonts, sizes). Updated through the existing `PATCH /organizations/:id`; the frontend owns the shape. Updates **merge** into the existing blob. `accent` is a top-level DTO field (hex-validated) stored as `branding.accent`. The same endpoint accepts multipart/form-data with a `logo` image file (≤2 MB) uploaded to **Cloudinary** (`gym-saas/org-logos` folder) and saved as `logo_url` — env vars `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET`. On multipart requests `branding` arrives as a JSON string and is parsed by a `@Transform` in the DTO.
 
 **Junction tables for gym access**
-Staff and Members do not have a direct FK to Gym. Access is always through `StaffGymAccess` and `MemberGymAccess`. This allows one staff or member to belong to multiple branches with per-row lifecycle (granted, revoked).
+Staff and Members have no direct FK to Gym. Access is always through `StaffGymAccess` and `MemberGymAccess`. One staff/member can belong to multiple branches; each row has its own lifecycle (granted → revoked).
 
 **gym_ids baked into JWT at login**
-At login time, the service queries active junction rows and embeds `gym_ids` directly into the token payload. Guards and services read gym scope from the token — no extra DB call per request. Token must be re-issued when gym access changes.
+Active junction rows are queried once at login and embedded in the token. No extra DB call per request. Token must be re-issued when gym access changes.
+
+**Member invite mirrors staff invite**
+Both use a 64-hex-char random token stored on the user row (`invite_token`, `invite_expires_at`). A placeholder bcrypt hash is set at invite time; the real hash is set on accept. Invite expires in 72 hours.
+
+**OTP-based password reset and change**
+Both staff and members use a 6-digit numeric OTP (stored in `reset_token`, expires in 10 min via `reset_token_expires_at`). Forgot-password is silent on unknown emails. Reset verifies `email + otp` together. Change-password requires authentication first — a separate `send-otp` endpoint dispatches the OTP, then `change-password` verifies it. Same `reset_token` column is reused for both flows.
+
+**Waiver per member+gym**
+`Waiver` has a `@Unique(['member_id', 'gym_id'])` constraint — one signed waiver per gym. IP is captured server-side from `req.ip` / `x-forwarded-for`. `signed_at` is set to `new Date()` in the service.
+
+**super_admin has null org_id**
+`staff_users.organization_id` is nullable. `super_admin` rows have `NULL` there. `StaffJwtPayload.org_id` is typed `string | null`. Any org-scoped endpoint must guard against null org_id explicitly (see `staff.controller.ts` example).
+
+**RolesGuard super_admin bypass**
+`if (user.role === StaffRole.SUPER_ADMIN) return true` runs before the `required.includes(user.role)` check. Super admin passes every `@Roles(...)` decorator automatically.
 
 **synchronize off in production**
 `TypeOrmModule` sets `synchronize: config.get('NODE_ENV') !== 'production'`. Run migrations explicitly in production.
 
-**autoLoadEntities: true**
-Entities are registered per-module via `TypeOrmModule.forFeature(...)`. No manual entity list in `AppModule`. New entities are picked up automatically as long as their module imports `forFeature`.
+**Member billing is manual (v1)**
+No payment processor for members yet — front desk collects cash/card in person. Creating a subscription auto-generates a `pending` invoice; `PATCH /invoices/:id/pay` (or `mark_paid: true` at creation) records the money. Renewals are explicit (`POST /subscriptions/:id/renew`); a daily 8:00 cron flags lapsed recurring subs `past_due` (payg/class_pack never recur — they get 1-year validity), and paying a past_due sub's invoice re-activates it. Discounts are first-invoice-only promo codes (usage-counted, expiry-checked); renewals charge full price. Plans archive, discounts deactivate — never hard-delete (FK references). Tax math is centralized in `VatService.computeTax()`: rate = plan `vat_rate_override` → gym `default_tax_rate`, zero when VAT-exempt or `tax_mode = none`; `tax_inclusive` gyms derive net from gross. `stripe_*` / `gocardless_*` columns are reserved for future online billing. One ongoing subscription per member per gym.
 
-**org_owner / org_admin bypass StaffGymAccess**
-These roles have org-wide authority. Guards should check `role === org_owner || role === org_admin` as an early-pass before checking `gym_ids` membership.
-
-**Discount FK missing on MemberSubscription**
-Currently there is no `discount_id` on `MemberSubscription`. Before implementing SubscriptionsModule, add this nullable FK to track which discount was applied to each subscription.
+**Class schedule: templates materialize real slot rows**
+`SlotTemplate.rrule` is a full RFC 5545 string (must include `DTSTART`, UTC) expanded with the `rrule` package. Slots are materialized ahead of time — on template create, via `POST /schedule/templates/:id/generate`, and by a daily 2:00 cron keeping a 30-day rolling horizon — never computed per request. Generation is idempotent (skips existing `starts_at` per template) and skips instructor-overlap occurrences. Each Slot snapshots capacity/instructor/`booking_window_hours`/`cancellation_cutoff_hours` from the template so single occurrences are editable independently ("this occurrence only") and one-off slots work identically; `apply_to_future: true` on a template PATCH propagates instead (timing changes delete+regenerate future *empty* slots, booked ones are kept). Capacity can never drop below `booking_count` (409). Disable ≠ delete: disable keeps bookings and emails affected members; hard delete only with zero bookings. Members never see disabled slots; `GET /schedule/slots/browse` annotates each slot with `spots_remaining`, `is_full`, `booking_opens_at`, `cancellation_cutoff_at`, `booking_open` — enforcement lands in BookingsModule, which will also own `booking_count` increments.
 
 **Booking QR token**
-`qr_token` on Booking is a signed JWT containing `booking_id + member_id + slot_id`. Check-in verifies the JWT signature without a DB lookup — stateless gate.
+`qr_token` on Booking = signed JWT containing `booking_id + member_id + slot_id`. Check-in verifies signature without a DB lookup — stateless gate.
 
-## 8. JWT Payload Shapes
+## 9. JWT Payload Shapes
 
 ### StaffJwtPayload
 ```typescript
 {
-  sub: string;        // StaffUser.id (UUID)
+  sub: string;           // StaffUser.id
   email: string;
-  role: StaffRole;    // 'org_owner' | 'org_admin' | 'gym_manager' | 'front_desk'
-  org_id: string;     // StaffUser.organization_id
-  gym_ids: string[];  // active StaffGymAccess rows for this staff (empty for org_owner/admin is fine — guards bypass on role)
+  role: StaffRole;       // 'super_admin' | 'org_admin' | 'gym_manager' | 'front_desk'
+  org_id: string | null; // null for super_admin
+  gym_ids: string[];     // active StaffGymAccess rows (empty for super_admin / org_admin)
 }
 ```
 
 ### MemberJwtPayload
 ```typescript
 {
-  sub: string;            // Member.id (UUID)
+  sub: string;            // Member.id
   email: string;
-  gym_ids: string[];      // all active MemberGymAccess rows
-  primary_gym_id: string; // the row where is_primary = true
+  gym_ids: string[];      // active MemberGymAccess rows
+  primary_gym_id: string; // row where is_primary = true
   status: MemberStatus;   // 'active' | 'paused' | 'expired' | 'cancelled'
 }
 ```
 
 Source of truth: `src/common/interfaces/jwt-payload.interface.ts`
 
-## 9. Environment Variables
+## 10. Seed Accounts (dev only)
+
+| Role | Email | Password |
+|---|---|---|
+| super_admin | super@platform.com | Super1234! |
+| org_admin | owner@test.com | Test1234! |
+
+Gym ID: `2e82ea95-3c50-48bf-93a1-251b7b807cd3`
+Org ID: `6c6ec47d-939c-4a64-aff6-52a3efe7a877`
+
+Re-run with `node seed.js` on a fresh DB. The seed org is created with `subscription_status = 'active'` so the dev org_admin isn't locked out by the SubscriptionInterceptor. On an **existing** DB (column added by synchronize with default `'pending'`), unlock it once with:
+`UPDATE organizations SET subscription_status = 'active';`
+
+## 11. Environment Variables
 
 | Variable | Purpose |
 |---|---|
@@ -192,3 +389,8 @@ Source of truth: `src/common/interfaces/jwt-payload.interface.ts`
 | `JWT_SECRET` | HS256 signing secret for all tokens |
 | `JWT_EXPIRES_IN` | Token TTL (default: `7d`) |
 | `NODE_ENV` | `production` disables TypeORM synchronize |
+| `FRONTEND_URL` | Base URL for invite email links (default: `http://localhost:3001`) |
+| `EMAIL_USER` | Gmail address for Nodemailer |
+| `EMAIL_PASS` | Gmail app password |
+| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_…` in dev) |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_…`, from `stripe listen` in dev) |
