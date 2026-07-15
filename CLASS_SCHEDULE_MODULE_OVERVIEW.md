@@ -13,6 +13,65 @@ SlotTemplate  (the recurring pattern — "Yoga, Mon/Wed/Fri 9:00, 12 spots")
 - **SlotTemplate** holds the recurrence rule (`rrule`, RFC 5545), duration, capacity, instructor, and the booking rules (`booking_window_hours`, `cancellation_cutoff_hours`).
 - **Slot** is what members see and book. Every slot carries its **own copy** of capacity, instructor and booking rules — snapshotted from the template at generation time — so a single occurrence can be edited without touching its siblings, and one-off slots (no template) work identically.
 
+## How templates and slots relate (and when you need which)
+
+**A template is a factory; a slot is the product.** The template stores the *pattern* ("Yoga every Mon/Wed/Fri at 9:00, 60 min, 12 spots"); the system stamps out concrete `Slot` rows from it. After a slot is created it is **self-sufficient** — it carries its own copy of every operational field, so it keeps working even if its template is later edited or deactivated.
+
+**A template is NOT required to create a slot.** `Slot.template_id` is nullable:
+
+| You want | Use | template involved? |
+|---|---|---|
+| A class that repeats (weekly yoga, daily HIIT) | `POST /schedule/templates` | yes — slots are generated from it |
+| A single event (one-off masterclass, workshop) | `POST /schedule/slots` | no — `template_id` stays `NULL` |
+
+Both kinds of slot behave identically afterwards: same calendar, same member browse, same disable/enable, same (future) booking rules — the only difference is that template-born slots are also reachable via `?template_id=` filtering and are touched by `apply_to_future` template edits and the nightly top-up cron.
+
+**Direction of dependence:** slots depend on templates only at *birth* (field values are copied over once). Templates never depend on slots. Members and bookings only ever see slots — a member cannot book "a template".
+
+## Field-by-field reference
+
+### `SlotTemplate` (`slot_templates` table) — the recurring pattern
+
+| Field | Type / default | What it means |
+|---|---|---|
+| `id` | uuid, PK | Auto-generated identifier. |
+| `gym_id` → `gym` | uuid, FK to `gyms` | Which branch this recurring class belongs to. Drives all staff scoping (org_admin sees own org's gyms, gym_manager only assigned gyms). |
+| `instructor_id` → `instructor` | uuid, FK to `staff_users` | Who teaches it. Must be an **active** staff user of the **same organization** as the gym (validated on create/update). Used for the double-booking overlap check. |
+| `activity_name` | string | Display name of the class ("Morning Yoga"). Copied onto every generated slot. |
+| `location` | string, nullable | Free-text room/area label ("Studio A"). Informational only — no room-conflict checking. |
+| `capacity` | int | Max bookable spots per occurrence. Copied onto each slot; each slot can then diverge. |
+| `rrule` | string | Full RFC 5545 recurrence rule, **must include a `DTSTART` line** (UTC) — `DTSTART` provides the date the pattern starts *and* the time-of-day of every occurrence. Example: `DTSTART:20260720T090000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR`. |
+| `duration_minutes` | int, default 60 | How long each occurrence runs. The rrule only yields *start* instants; each slot's `ends_at` = start + this. |
+| `booking_window_hours` | int, default 24 | How far **in advance** members may book: booking opens at `starts_at − window`. Copied onto each slot. |
+| `cancellation_cutoff_hours` | int, default 2 | Members may cancel until `starts_at − cutoff`. Copied onto each slot. (Both windows are *enforced* by BookingsModule; here they're stored and surfaced.) |
+| `is_active` | bool, default true | Soft-delete flag. `DELETE /schedule/templates/:id` sets it false — the row is kept, the nightly cron skips it, and no new slots are generated. |
+| `created_at` | timestamp | Row creation time. |
+| `slots` | relation | All slot instances ever generated from this template. |
+
+### `Slot` (`slots` table) — one concrete, bookable session
+
+| Field | Type / default | What it means |
+|---|---|---|
+| `id` | uuid, PK | Auto-generated identifier. This is what bookings reference. |
+| `template_id` → `template` | uuid, FK, **nullable** | The template that generated it — or `NULL` for a one-off slot created directly via `POST /schedule/slots`. Also the idempotency key together with `starts_at` (generation never creates a second slot with the same template + start time). |
+| `gym_id` → `gym` | uuid, FK | Branch the session happens at. Copied from the template (or given directly for one-offs). |
+| `instructor_id` → `instructor` | uuid, FK | Who teaches *this* occurrence. Starts as the template's instructor but can be changed per-slot (substitute teacher) — the overlap check then runs against the new instructor's other enabled slots. |
+| `activity_name` | string | Class name shown on the calendar and member app. Editable per-slot. |
+| `location` | string, nullable | Room/area label for this occurrence. |
+| `starts_at` | timestamp (UTC) | When this session starts. From the rrule occurrence, or given directly for one-offs. |
+| `ends_at` | timestamp (UTC) | When it ends: `starts_at + duration_minutes` for generated slots, given explicitly for one-offs. Must be after `starts_at`. |
+| `capacity` | int | Max spots for **this** occurrence. Can never be set below the current `booking_count` (409). |
+| `booking_count` | int, default 0 | Live count of active bookings. **Owned by BookingsModule** — this module only reads it (for `spots_remaining`, `is_full`, capacity guards). Nothing here increments it. |
+| `booking_window_hours` | int, default 24 | Snapshot of the template value at generation time (or per-slot value for one-offs). Lives on the slot so booking rules are read with zero joins and template edits don't retroactively change already-published sessions unless you ask (`apply_to_future`). |
+| `cancellation_cutoff_hours` | int, default 2 | Same snapshot logic as above. |
+| `status` | enum `enabled` / `disabled`, default `enabled` | `enabled` = visible & bookable to members. `disabled` = hidden from member browse, bookings kept on record, booked members emailed. **Disabled ≠ full ≠ deleted** — "full" is derived (`booking_count >= capacity`), never a status. |
+| `created_at` | timestamp | Row creation time. |
+| `bookings` | relation | All bookings against this slot (the staff roster preview in `GET /schedule/slots/:id`). |
+
+### Why some fields exist on *both*
+
+`activity_name`, `location`, `capacity`, `instructor_id`, `booking_window_hours`, `cancellation_cutoff_hours` appear on both entities on purpose. The template holds the **defaults for future occurrences**; each slot holds the **actual values for that one session**. That's what makes "this occurrence only" edits (PATCH one slot) and "all future occurrences" edits (PATCH template with `apply_to_future: true`) two cleanly separated operations — and what lets one-off slots exist without any template at all.
+
 ## RRULE + materialization, not on-the-fly expansion
 
 Recurrence is stored as a standard RFC 5545 string (expanded with the `rrule` npm package) and **materialized into real slot rows** ahead of time, rather than computed per request:
