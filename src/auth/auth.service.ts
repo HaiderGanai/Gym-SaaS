@@ -53,38 +53,61 @@ export class AuthService {
     return { access_token: this.jwtService.sign(payload), organization: org };
   }
 
-  async loginStaff(dto: StaffLoginDto): Promise<{ access_token: string }> {
+  async loginStaff(dto: StaffLoginDto) {
     const staff = await this.staffService.findByEmail(dto.email);
     if (!staff || !staff.is_active) throw new UnauthorizedException('Invalid credentials');
     const valid = await bcrypt.compare(dto.password, staff.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const gym_ids = await this.staffService.getActiveGymIds(staff.id);
     const payload: StaffJwtPayload = { sub: staff.id, email: staff.email, role: staff.role, org_id: staff.organization_id, gym_ids };
-    return { access_token: this.jwtService.sign(payload) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBranding(staff.organization_id) };
   }
 
-  async loginMember(dto: MemberLoginDto): Promise<{ access_token: string }> {
+  async loginMember(dto: MemberLoginDto) {
     const member = await this.membersService.findByEmail(dto.email);
     if (!member) throw new UnauthorizedException('Invalid credentials');
     const valid = await bcrypt.compare(dto.password, member.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id) };
   }
 
-  async acceptStaffInvite(dto: AcceptInviteDto): Promise<{ access_token: string }> {
+  async acceptStaffInvite(dto: AcceptInviteDto) {
     const staff = await this.staffService.acceptInvite(dto.token, dto.password);
     const gym_ids = await this.staffService.getActiveGymIds(staff.id);
     const payload: StaffJwtPayload = { sub: staff.id, email: staff.email, role: staff.role, org_id: staff.organization_id, gym_ids };
-    return { access_token: this.jwtService.sign(payload) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBranding(staff.organization_id) };
   }
 
-  async acceptMemberInvite(dto: AcceptMemberInviteDto): Promise<{ access_token: string }> {
+  async acceptMemberInvite(dto: AcceptMemberInviteDto) {
     const member = await this.membersService.acceptMemberInvite(dto);
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id) };
+  }
+
+  // ── Org branding at login ────────────────────────────────────────────────────
+  // Shipped with every login/invite-accept response so the app can theme itself
+  // before making any authenticated call. null for super_admin (no org).
+
+  private async orgBranding(orgId: string | null) {
+    if (!orgId) return null;
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    return org ? this.brandingShape(org) : null;
+  }
+
+  // members have no org_id — their organization is reached through the primary gym
+  private async orgBrandingByGym(gymId?: string) {
+    if (!gymId) return null;
+    const org = await this.orgRepo.createQueryBuilder('o')
+      .innerJoin('o.gyms', 'g', 'g.id = :gymId', { gymId })
+      .getOne();
+    return org ? this.brandingShape(org) : null;
+  }
+
+  private brandingShape(org: Organization) {
+    return { id: org.id, name: org.name, logo_url: org.logo_url, branding: org.branding };
   }
 
   // ── Forgot / reset (unauthenticated) ────────────────────────────────────────

@@ -89,10 +89,10 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 
 | Method | Path | Guard | Who |
 |---|---|---|---|
-| POST | `/auth/staff/login` | Public | Any staff |
-| POST | `/auth/member/login` | Public | Any member |
-| POST | `/auth/staff/invite/accept` | Public | Invited staff (via email link) |
-| POST | `/auth/member/invite/accept` | Public | Invited member (via email link) |
+| POST | `/auth/staff/login` | Public | Any staff — returns `access_token` + `organization` branding block (null for super_admin) |
+| POST | `/auth/member/login` | Public | Any member — returns `access_token` + `organization` branding block (via primary gym) |
+| POST | `/auth/staff/invite/accept` | Public | Invited staff (via email link) — same response shape as login |
+| POST | `/auth/member/invite/accept` | Public | Invited member (via email link) — same response shape as login |
 | POST | `/auth/staff/forgot-password` | Public | Any staff — sends 6-digit OTP to email |
 | POST | `/auth/staff/reset-password` | Public | `{ email, otp, password }` — verifies OTP, resets |
 | POST | `/auth/staff/change-password/send-otp` | StaffJwt | Sends OTP to logged-in staff's email |
@@ -301,6 +301,9 @@ Global guards run before route-level JWT guards (so `request.user` wouldn't exis
 
 **Branch-count pricing via Stripe quantity**
 One Stripe Price per plan; checkout quantity = branches paid for. `GymService.create` blocks creating more gyms than `OrgSubscription.branch_count` (orgs without a sub row — e.g. seeded — are not limited). `POST /platform/billing/quantity` updates the Stripe subscription with proration.
+
+**Org branding ships in the login response**
+`POST /auth/staff/login`, `POST /auth/member/login` and both invite-accept endpoints return `organization: { id, name, logo_url, branding }` alongside `access_token`, so the app can theme itself before making any authenticated call. Staff orgs resolve via `organization_id` (null for super_admin → `organization: null`); members resolve via their `primary_gym_id` → gym → organization.
 
 **Org branding is a jsonb blob**
 `Organization.branding` (jsonb) holds the org's app theme (colors, fonts, sizes). Updated through the existing `PATCH /organizations/:id`; the frontend owns the shape. Updates **merge** into the existing blob. `accent` is a top-level DTO field (hex-validated) stored as `branding.accent`. The same endpoint accepts multipart/form-data with a `logo` image file (≤2 MB) uploaded to **Cloudinary** (`gym-saas/org-logos` folder) and saved as `logo_url` — env vars `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET`. On multipart requests `branding` arrives as a JSON string and is parsed by a `@Transform` in the DTO.
