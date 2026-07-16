@@ -121,6 +121,8 @@ There is deliberately no `generated_until` **column** on the template — the ma
 
 So the frontend renders "bookable until 12 Oct" straight off the template payload, and after a `/generate` call the response itself shows the window moving.
 
+**`/generate` is add-only — it never shrinks the window.** Every call expands the rrule from *now* to your `until`, inserts what's missing (`created`), and reports what already existed in that range (`skipped_existing`). Sending an *earlier* `until` than the current `generated_until` is therefore a no-op: `created: 0`, nothing deleted, `generated_until` unchanged. This is deliberate — slots beyond a shortened window may already carry bookings, so shrinking is an explicit act: delete individual empty slots (`DELETE /schedule/slots/:id`, 409 if booked), disable them, or deactivate the whole template (which bulk-removes all future *empty* slots). Note the nightly cron always re-fills the next 30 days for active templates, so you can never shrink below that horizon. `future_slots` counts every remaining upcoming slot, so it grows as you extend and shrinks by itself as sessions pass into history.
+
 ## RRULE anatomy — what the frontend needs to build
 
 The `rrule` field is a standard **RFC 5545** recurrence string (same format Google Calendar uses). It is always **two lines** joined with `\n`:
