@@ -170,11 +170,11 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | PATCH | `/vat/summaries/:id/file` | StaffJwt + Roles(org_admin) | Mark filed (`is_filed` + `filed_at`) |
 | GET | `/vat/org-rollup` | StaffJwt + Roles(org_admin) | Live org-wide rollup; `?period_start=&period_end=` |
 | POST | `/schedule/templates` | StaffJwt + Roles(org_admin, gym_manager) | Create recurring template; materializes slots (default 30 days, `generate_until?`) |
-| GET | `/schedule/templates` | StaffJwt | List templates (scoped); `?gym_id=`, `?include_inactive=true` |
-| GET | `/schedule/templates/:id` | StaffJwt | Single template with instructor |
+| GET | `/schedule/templates` | StaffJwt | List templates (scoped); `?gym_id=`, `?include_inactive=true`; each includes computed `generated_until` + `future_slots` |
+| GET | `/schedule/templates/:id` | StaffJwt | Single template with instructor + `generated_until`/`future_slots` |
 | PATCH | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Update; `apply_to_future: true` propagates to future slots (timing changes regenerate empty slots, booked ones kept) |
 | DELETE | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Deactivate (soft); removes future empty slots, keeps booked |
-| POST | `/schedule/templates/:id/generate` | StaffJwt + Roles(org_admin, gym_manager) | `{ until }` — extend materialized window (idempotent, max 366 days) |
+| POST | `/schedule/templates/:id/generate` | StaffJwt + Roles(org_admin, gym_manager) | `{ until }` — extend materialized window (idempotent, max 366 days); response reports new `generated_until` |
 | POST | `/schedule/slots` | StaffJwt + Roles(org_admin, gym_manager) | One-off custom slot; 409 on instructor overlap |
 | GET | `/schedule/slots` | StaffJwt | Calendar (scoped); `?gym_id=&from=&to=&status=&template_id=` (default today → +30d) |
 | GET | `/schedule/slots/browse` | MemberJwt | Enabled future slots in member's gyms + `spots_remaining`/`is_full`/`booking_open` etc. |

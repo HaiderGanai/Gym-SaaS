@@ -45,7 +45,7 @@ export class ScheduleController {
   @Get('templates/:id')
   @UseGuards(StaffJwtGuard)
   findOneTemplate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: StaffJwtPayload) {
-    return this.scheduleService.findOneTemplate(id, user);
+    return this.scheduleService.templateDetail(id, user);
   }
 
   @Patch('templates/:id')

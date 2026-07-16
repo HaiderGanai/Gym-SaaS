@@ -31,7 +31,8 @@ Login first — **POST** `/auth/staff/login` → save as `{{admin_token}}`. For 
 ```
 Response: the template **plus** the slots materialized for the next 30 days:
 ```json
-{ "template": { "id": "..." }, "created": 13, "skipped_existing": 0, "skipped_conflicts": 0 }
+{ "template": { "id": "..." }, "created": 13, "skipped_existing": 0, "skipped_conflicts": 0,
+  "generated_until": "2026-08-14T09:00:00.000Z", "future_slots": 13 }
 ```
 → save `template.id` as `{{template_id}}`.
 
@@ -80,7 +81,9 @@ Changing the timing (`rrule` / `duration_minutes`) with `apply_to_future: true` 
 ```json
 { "until": "2026-10-01" }
 ```
-→ `{ "created": 27, "skipped_existing": 13, "skipped_conflicts": 0 }` — idempotent, safe to re-run.
+→ `{ "created": 27, "skipped_existing": 13, "skipped_conflicts": 0, "generated_until": "2026-10-12T09:00:00.000Z", "future_slots": 40 }` — idempotent, safe to re-run.
+
+`generated_until` = latest materialized occurrence (how far out the schedule currently extends); `future_slots` = upcoming slot count. Both computed fields are also on every template in `GET /schedule/templates` and `GET /schedule/templates/:id`, so the frontend always knows the current window without querying slots.
 
 (A daily 2:00 AM cron keeps every active template materialized 30 days out automatically.)
 

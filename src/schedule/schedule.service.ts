@@ -48,12 +48,12 @@ export class ScheduleService {
     const { generate_until, ...fields } = dto;
     const template = await this.templateRepo.save(this.templateRepo.create(fields));
     const result = await this.materialize(template, new Date(), until);
-    return { template, ...result };
+    return { template, ...result, ...(await this.window(template.id)) };
   }
 
   async findAllTemplates(user: StaffJwtPayload, gymId?: string, includeInactive = false) {
     const ids = await this.gymFilter(user, gymId);
-    return this.templateRepo.find({
+    const templates = await this.templateRepo.find({
       where: {
         ...(ids ? { gym_id: In(ids) } : {}),
         ...(includeInactive ? {} : { is_active: true }),
@@ -62,6 +62,14 @@ export class ScheduleService {
       select: { instructor: { id: true, email: true } },
       order: { created_at: 'DESC' },
     });
+    const windows = await this.windows(templates.map((t) => t.id));
+    return templates.map((t) => ({ ...t, ...windows.get(t.id) }));
+  }
+
+  // single template + its materialized-window info (client-facing GET :id)
+  async templateDetail(id: string, user: StaffJwtPayload) {
+    const template = await this.findOneTemplate(id, user);
+    return { ...template, ...(await this.window(id)) };
   }
 
   async findOneTemplate(id: string, user: StaffJwtPayload): Promise<SlotTemplate> {
@@ -148,7 +156,8 @@ export class ScheduleService {
   async generateForTemplate(id: string, dto: GenerateSlotsDto, user: StaffJwtPayload) {
     const template = await this.findOneTemplate(id, user);
     if (!template.is_active) throw new ConflictException('Template is deactivated');
-    return this.materialize(template, new Date(), this.resolveUntil(dto.until));
+    const result = await this.materialize(template, new Date(), this.resolveUntil(dto.until));
+    return { ...result, ...(await this.window(id)) };
   }
 
   // ── Slots ────────────────────────────────────────────────────────────────
@@ -365,6 +374,30 @@ export class ScheduleService {
     }
     if (toCreate.length) await this.slotRepo.save(this.slotRepo.create(toCreate));
     return { created: toCreate.length, skipped_existing: skippedExisting, skipped_conflicts: skippedConflicts };
+  }
+
+  // the materialized window is derived from slot rows — templates store no
+  // "valid until"; generated_until = latest occurrence created so far
+  private async windows(templateIds: string[]) {
+    const map = new Map<string, { generated_until: Date | null; future_slots: number }>();
+    for (const id of templateIds) map.set(id, { generated_until: null, future_slots: 0 });
+    if (templateIds.length === 0) return map;
+    const rows: { template_id: string; generated_until: Date; future_slots: string }[] =
+      await this.slotRepo.createQueryBuilder('s')
+        .select('s.template_id', 'template_id')
+        .addSelect('MAX(s.starts_at)', 'generated_until')
+        .addSelect('COUNT(*) FILTER (WHERE s.starts_at > NOW())', 'future_slots')
+        .where('s.template_id IN (:...ids)', { ids: templateIds })
+        .groupBy('s.template_id')
+        .getRawMany();
+    for (const r of rows) {
+      map.set(r.template_id, { generated_until: r.generated_until, future_slots: Number(r.future_slots) });
+    }
+    return map;
+  }
+
+  private async window(templateId: string) {
+    return (await this.windows([templateId])).get(templateId)!;
   }
 
   private async assertInstructor(instructorId: string, gym: Gym): Promise<StaffUser> {

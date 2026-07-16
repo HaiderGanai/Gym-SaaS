@@ -112,7 +112,14 @@ Three common "nothing happened" cases:
 2. **You looked at the template, not the slots.** Verify with `GET /schedule/slots?template_id=<id>&from=<today>&to=<until>` — the new occurrences are there.
 3. **The rrule simply has no occurrences in that range** (e.g. `UNTIL`/`COUNT` inside the rrule already ended) → `created: 0` legitimately.
 
-There is deliberately no `generated_until` column on the template — the materialized window *is* the slot rows; query them to see how far out the schedule extends.
+There is deliberately no `generated_until` **column** on the template — the materialized window *is* the slot rows. Instead, every template response computes it live: `GET /schedule/templates`, `GET /schedule/templates/:id`, template create, and `/generate` all include
+
+| Computed field | Meaning |
+|---|---|
+| `generated_until` | `starts_at` of the latest materialized slot — how far out the schedule currently extends (`null` if no slots). |
+| `future_slots` | Number of upcoming slots from this template. |
+
+So the frontend renders "bookable until 12 Oct" straight off the template payload, and after a `/generate` call the response itself shows the window moving.
 
 ## RRULE anatomy — what the frontend needs to build
 
