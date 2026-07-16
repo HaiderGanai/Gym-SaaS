@@ -61,13 +61,15 @@ export class OrganizationService {
     if (user.role !== StaffRole.SUPER_ADMIN && user.org_id !== id) {
       throw new ForbiddenException('Access denied');
     }
-    const { accent, branding, ...rest } = dto;
+    const { accent, primary_color, secondary_color, branding, ...rest } = dto;
     Object.assign(org, rest);
-    // branding merges (partial updates don't wipe existing theme); accent lives inside it
-    if (branding || accent) {
+    // branding merges (partial updates don't wipe existing theme); core colors live inside it
+    if (branding || accent || primary_color || secondary_color) {
       org.branding = {
         ...(org.branding ?? {}),
         ...(branding ?? {}),
+        ...(primary_color ? { primary_color } : {}),
+        ...(secondary_color ? { secondary_color } : {}),
         ...(accent ? { accent } : {}),
       };
     }

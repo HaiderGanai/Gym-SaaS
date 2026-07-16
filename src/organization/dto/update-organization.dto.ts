@@ -16,7 +16,17 @@ export class UpdateOrganizationDto {
   @MaxLength(3)
   currency?: string;
 
-  // accent color hex — stored as branding.accent
+  // core theme colors — validated hex, stored inside branding
+  @IsString()
+  @IsOptional()
+  @Matches(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, { message: 'primary_color must be a hex color like #111827' })
+  primary_color?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, { message: 'secondary_color must be a hex color like #6B7280' })
+  secondary_color?: string;
+
   @IsString()
   @IsOptional()
   @Matches(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, { message: 'accent must be a hex color like #F59E0B' })

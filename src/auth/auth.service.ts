@@ -106,8 +106,23 @@ export class AuthService {
     return org ? this.brandingShape(org) : null;
   }
 
+  // primary_color / secondary_color / accent / logo_url are guaranteed present —
+  // platform defaults fill anything the org hasn't customized, so the UI can
+  // always theme itself straight off the login response
   private brandingShape(org: Organization) {
-    return { id: org.id, name: org.name, logo_url: org.logo_url, branding: org.branding };
+    const b = org.branding ?? {};
+    return {
+      id: org.id,
+      name: org.name,
+      logo_url: org.logo_url ?? null,
+      branding: {
+        ...b,
+        primary_color: b.primary_color ?? '#111827',
+        secondary_color: b.secondary_color ?? '#6B7280',
+        accent: b.accent ?? '#F59E0B',
+        logo_url: b.logo_url ?? org.logo_url ?? null,
+      },
+    };
   }
 
   // ── Forgot / reset (unauthenticated) ────────────────────────────────────────
