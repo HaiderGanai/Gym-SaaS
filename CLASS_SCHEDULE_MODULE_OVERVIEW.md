@@ -89,6 +89,77 @@ DTSTART:20260720T090000Z
 RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR
 ```
 
+### What `POST /schedule/templates/:id/generate` actually does (and why the template "doesn't change")
+
+This endpoint **never modifies the template row**. Looking at the template after calling it will always show zero difference — that's expected, not a bug. What it does is create **Slot rows**: it expands the template's rrule from *now* until the `until` date you send, and inserts a slot for every occurrence that doesn't already exist.
+
+```
+POST /schedule/templates/:id/generate
+{ "until": "2026-10-15" }        ← extend the bookable window out to this date
+```
+
+The response tells you exactly what happened:
+
+| Field | Meaning |
+|---|---|
+| `created` | New slot rows inserted. |
+| `skipped_existing` | Occurrences that already had a slot (idempotency — re-running is always safe). |
+| `skipped_conflicts` | Occurrences dropped because the instructor already has an overlapping enabled slot. |
+
+Three common "nothing happened" cases:
+
+1. **`until` is within the already-materialized window.** Template creation + the nightly cron already keep 30 days materialized. If you send `until` ≤ ~30 days out, every occurrence already exists → `created: 0, skipped_existing: N`. To see new rows, send an `until` **beyond** the current window (up to 366 days ahead).
+2. **You looked at the template, not the slots.** Verify with `GET /schedule/slots?template_id=<id>&from=<today>&to=<until>` — the new occurrences are there.
+3. **The rrule simply has no occurrences in that range** (e.g. `UNTIL`/`COUNT` inside the rrule already ended) → `created: 0` legitimately.
+
+There is deliberately no `generated_until` column on the template — the materialized window *is* the slot rows; query them to see how far out the schedule extends.
+
+## RRULE anatomy — what the frontend needs to build
+
+The `rrule` field is a standard **RFC 5545** recurrence string (same format Google Calendar uses). It is always **two lines** joined with `\n`:
+
+```
+DTSTART:20260720T090000Z
+RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR
+```
+
+**Line 1 — `DTSTART` (required, we reject rules without it):**
+`DTSTART:YYYYMMDDTHHMMSSZ` — UTC, no dashes/colons in the value. It carries **two things at once**: the date the pattern begins *and* the time-of-day of every occurrence. `20260720T090000Z` = pattern starts 20 Jul 2026, every class runs at 09:00 UTC. The class *length* is NOT here — it comes from the template's `duration_minutes`.
+
+**Line 2 — `RRULE`:** semicolon-separated `KEY=VALUE` pairs:
+
+| Key | Values | Meaning |
+|---|---|---|
+| `FREQ` | `DAILY` / `WEEKLY` / `MONTHLY` | The base cadence. `WEEKLY` is the gym workhorse. |
+| `BYDAY` | `MO,TU,WE,TH,FR,SA,SU` (comma list) | Which weekdays (with `FREQ=WEEKLY`). |
+| `INTERVAL` | integer, default 1 | Every N-th period. `FREQ=WEEKLY;INTERVAL=2` = every other week. |
+| `UNTIL` | `YYYYMMDDTHHMMSSZ` | Hard end date for the pattern (optional — omit for "runs forever"). |
+| `COUNT` | integer | Alternative to UNTIL: stop after N total occurrences. |
+
+**How the frontend maps a "create class" form onto this string:**
+
+A typical form — activity, start date, time, day-of-week checkboxes, optional end date — converts like this:
+
+1. Combine the **start date + class time** the user picked, convert from the gym's local timezone to **UTC**, format as `YYYYMMDDTHHMMSSZ` → that's `DTSTART`. (e.g. with `date-fns` or `dayjs.utc()`; 09:00 in Berlin summer = `070000Z`.)
+2. **Day checkboxes** → `BYDAY=` two-letter codes joined by commas (Mon+Wed+Fri → `MO,WE,FR`).
+3. Cadence dropdown ("weekly" / "every 2 weeks" / "daily") → `FREQ=` + optional `INTERVAL=`.
+4. Optional "ends on" date → `UNTIL=` in the same UTC format (or leave it off).
+5. Join: `` `DTSTART:${dtstart}\nRRULE:FREQ=WEEKLY;BYDAY=${days}` `` — in JSON the `\n` is the literal two characters `\n` inside the string, which is what JSON.stringify produces naturally from a real newline.
+6. Class **duration** goes in `duration_minutes`, not in the rrule.
+
+The frontend can also use the same [`rrule` npm package](https://github.com/jkbrzt/rrule) the backend uses: build with `new RRule({ freq: RRule.WEEKLY, byweekday: [RRule.MO, RRule.WE], dtstart })`, call `.toString()`, send the result — guaranteed parseable, and `.all()`/`.between()` gives you a live client-side preview ("this will create classes on: …") before submitting.
+
+**Recipe examples:**
+
+| Schedule | rrule string |
+|---|---|
+| Mon/Wed/Fri 09:00 UTC, forever | `DTSTART:20260720T090000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR` |
+| Every day 06:30 UTC | `DTSTART:20260720T063000Z\nRRULE:FREQ=DAILY` |
+| Sat 10:00 UTC, every other week | `DTSTART:20260725T100000Z\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=SA` |
+| Tue/Thu 18:00 UTC, 8-week course | `DTSTART:20260721T180000Z\nRRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=16` |
+
+**Timezone caveat (known ceiling):** everything is UTC end-to-end; the frontend converts for display. A class stored at `090000Z` stays at 09:00 *UTC* across a DST change, so its local wall-clock time will shift by an hour — revisit with per-gym timezones if it bites.
+
 ## Design choices worth knowing
 
 **"This occurrence only" vs "all future occurrences" (UX brief 4.6).**
