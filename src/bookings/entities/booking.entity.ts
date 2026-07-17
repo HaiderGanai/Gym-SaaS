@@ -44,8 +44,8 @@ export class Booking {
   })
   status!: BookingStatus;
 
-  @Column({ nullable: true })
-  waitlist_position!: number;
+  @Column({ type: 'int', nullable: true })
+  waitlist_position!: number | null;
 
   @Column({ nullable: true })
   qr_token!: string;

@@ -81,7 +81,8 @@ Organization
 - [x] **MembersModule (expanded)** — list members, member profile (staff), member self-profile + self-update, update member status/pause/cancel (8 endpoints total)
 - [x] **PlatformBillingModule** — org self-signup, platform plan CRUD (Stripe Product/Price), Stripe Checkout, webhook handling, payment-method CRUD, branch-quantity upgrades, cancel, super_admin subscription admin, 3-day grace period with daily reminder cron, org branding (jsonb), subscription access lock
 - [x] **Member billing chain (manual v1)** — PlansModule (plan + discount CRUD), SubscriptionsModule (staff-led subscribe with promo code, renew, pause/resume/cancel, daily past_due cron), InvoicesModule (auto-generated per period, manual pay/refund/resend, VAT breakdown, per-gym invoice numbers), VatModule (tax calc, stored per-gym period summaries, live org rollup). No member payment processor — front desk collects cash/card and marks invoices paid. See `MEMBER_BILLING_MODULE_OVERVIEW.md` + `MEMBER_BILLING_POSTMAN_ENDPOINTS.md`.
-- [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. Bookings themselves are the next module. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
+- [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
+- [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. See `BOOKINGS_MODULE_OVERVIEW.md` + `BOOKINGS_POSTMAN_ENDPOINTS.md`.
 
 ### Active Endpoints
 
@@ -183,6 +184,15 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | PATCH | `/schedule/slots/:id/disable` | StaffJwt + Roles(org_admin, gym_manager) | Disable + email confirmed/waitlisted members |
 | PATCH | `/schedule/slots/:id/enable` | StaffJwt + Roles(org_admin, gym_manager) | Re-enable |
 | DELETE | `/schedule/slots/:id` | StaffJwt + Roles(org_admin, gym_manager) | Hard delete — only when slot has zero bookings |
+| POST | `/bookings` | MemberJwt | Book a slot `{ slot_id }`; confirmed (with QR) or waitlisted when full |
+| GET | `/bookings/me` | MemberJwt | Own upcoming bookings + QR tokens; `?include_past=true` |
+| PATCH | `/bookings/:id/cancel` | MemberJwt | Cancel own booking (respects `cancellation_cutoff_hours`); frees spot → waitlist promotion |
+| GET | `/bookings` | StaffJwt | List/roster (scoped); `?gym_id=&slot_id=&member_id=&status=` |
+| PATCH | `/bookings/:id/staff-cancel` | StaffJwt | Cutoff-free cancel (front-desk override); runs promotion |
+| PATCH | `/bookings/:id/no-show` | StaffJwt | confirmed → no_show, only after class start |
+| GET | `/members/me/entry-qr` | MemberJwt | Gym-door entry QR; 403 without active subscription; `?gym_id=` |
+| POST | `/checkin/entry` | StaffJwt | Scan entry QR → `{ allowed, reason?, member, subscription? }` (live sub check) |
+| POST | `/checkin/booking` | StaffJwt | Scan class QR → marks checked_in; `{ allowed, reason?, member, class }` |
 
 ### Key files
 
@@ -264,6 +274,13 @@ src/schedule/
   dto/create-template.dto.ts, update-template.dto.ts, generate-slots.dto.ts,
       create-slot.dto.ts, update-slot.dto.ts
 
+src/bookings/
+  bookings.module.ts
+  bookings.controller.ts  ← BookingsController (/bookings) + CheckinController (/checkin) + EntryQrController (/members/me/entry-qr)
+  bookings.service.ts     ← gates, atomic capacity claim, waitlist promotion, QR sign/verify
+  entities/booking.entity.ts
+  dto/create-booking.dto.ts, checkin.dto.ts
+
 src/common/utils/gym-scope.ts  ← scopedGymIds() / assertGymAccess() — shared staff gym-scoping helpers
 
 src/main.ts   ← global ValidationPipe, setGlobalPrefix('api/v1'), rawBody:true (Stripe webhook)
@@ -281,7 +298,7 @@ seed.js       ← creates super_admin + org + gym + org_admin; run with node see
 - [x] InvoicesModule — auto-generated, manual pay/refund/resend, vat_number + invoice_number snapshotted
 - [x] VatModule — computeTax(), VatPeriodSummary generation + filing; org rollup is a live query
 - [x] ClassScheduleModule — RRULE templates, slot materialization + cron, occurrence-level edits, disable/enable with notifications, member browse
-- [ ] BookingsModule — waitlist via `waitlist_position`; QR token = signed JWT (booking_id + member_id + slot_id)
+- [x] BookingsModule — booking gates, waitlist + promotion, class QR check-in, gym-door entry QR, no-show, staff roster
 - [ ] CommunicationModule — expand: PushService, NotificationLog, more email templates
 - [ ] ReportsModule — AiReport (daily, per gym, Gemini); OrgReport (monthly, all gyms)
 
@@ -338,8 +355,8 @@ No payment processor for members yet — front desk collects cash/card in person
 **Class schedule: templates materialize real slot rows**
 `SlotTemplate.rrule` is a full RFC 5545 string (must include `DTSTART`, UTC) expanded with the `rrule` package. Slots are materialized ahead of time — on template create, via `POST /schedule/templates/:id/generate`, and by a daily 2:00 cron keeping a 30-day rolling horizon — never computed per request. Generation is idempotent (skips existing `starts_at` per template) and skips instructor-overlap occurrences. Each Slot snapshots capacity/instructor/`booking_window_hours`/`cancellation_cutoff_hours` from the template so single occurrences are editable independently ("this occurrence only") and one-off slots work identically; `apply_to_future: true` on a template PATCH propagates instead (timing changes delete+regenerate future *empty* slots, booked ones are kept). Capacity can never drop below `booking_count` (409). Disable ≠ delete: disable keeps bookings and emails affected members; hard delete only with zero bookings. Members never see disabled slots; `GET /schedule/slots/browse` annotates each slot with `spots_remaining`, `is_full`, `booking_opens_at`, `cancellation_cutoff_at`, `booking_open` — enforcement lands in BookingsModule, which will also own `booking_count` increments.
 
-**Booking QR token**
-`qr_token` on Booking = signed JWT containing `booking_id + member_id + slot_id`. Check-in verifies signature without a DB lookup — stateless gate.
+**Bookings: subscription-gated, two QR codes, derived credits**
+Booking requires an active `MemberSubscription` at the slot's gym (the manual-billing collection lever: `past_due`/`paused` block booking). Capacity is claimed with one atomic `UPDATE … WHERE booking_count < capacity` (race-safe); full classes waitlist, and a confirmed cancellation promotes the lowest `waitlist_position` (QR issued + email, `booking_count` unchanged). `booking_count` counts confirmed only, and BookingsModule owns all its mutations. Class-pack/PAYG credits are derived — count of non-cancelled bookings at the gym in the current period vs `included_credits` — so in-time cancellation refunds automatically. Two signed-JWT QRs with distinct `typ` claims: the **class QR** (`booking_id + member_id + slot_id`, expires at slot end, issued on confirm/promotion) and the **gym-door entry QR** (`member_id + gym_id`, fetched on demand at `GET /members/me/entry-qr`, never stored, expires at `current_period_end`; the scan does one live DB check so pause/cancel revokes mid-period). Scan endpoints return `200 { allowed, reason }` for scanner UX instead of HTTP errors. Member cancel respects the slot's `cancellation_cutoff_hours`; `staff-cancel` overrides it. No unique (slot, member) constraint — cancelled rows must not block rebooking; a pre-query blocks duplicates.
 
 ## 9. JWT Payload Shapes
 

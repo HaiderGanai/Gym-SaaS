@@ -179,6 +179,36 @@ export class MailService {
     }
   }
 
+  // sent when a cancellation frees a spot and the first waitlisted member gets it
+  async sendWaitlistPromoted(
+    toEmail: string,
+    memberName: string,
+    activityName: string,
+    startsAt: Date,
+    gymName: string,
+  ): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `You're in! A spot opened up in ${activityName}`,
+        html: `
+          <h2>Hi ${memberName},</h2>
+          <p>Good news — a spot opened up and your waitlisted booking is now <strong>confirmed</strong>:</p>
+          <p style="padding:12px 16px;background:#f0fdf4;border-radius:8px">
+            <strong>${activityName}</strong><br/>
+            ${new Date(startsAt).toUTCString()}<br/>
+            ${gymName}
+          </p>
+          <p>Your check-in QR code is ready in the app. See you there!</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send waitlist promotion email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send waitlist promotion email');
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';
