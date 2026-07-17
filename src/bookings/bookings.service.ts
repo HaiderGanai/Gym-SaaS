@@ -349,7 +349,10 @@ export class BookingsService {
       .leftJoinAndSelect('sub.plan', 'plan')
       .where('sub.member_id = :memberId AND sub.gym_id = :gymId', { memberId, gymId })
       .andWhere('sub.status = :status', { status: SubscriptionStatus.ACTIVE })
-      .andWhere('sub.current_period_start <= :today AND sub.current_period_end >= :today', { today })
+      // "paid through today or later" — no start check: renew advances the whole
+      // window forward, so an early renewal has a future period_start while the
+      // member is still fully paid up
+      .andWhere('sub.current_period_end >= :today', { today })
       .orderBy('sub.created_at', 'DESC')
       .getOne();
   }

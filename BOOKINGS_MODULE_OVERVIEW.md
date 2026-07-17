@@ -50,7 +50,7 @@ error you get back:
 | 3 | Slot's gym is in the member's `gym_ids` | 403 |
 | 4 | Class hasn't started yet | 400 |
 | 5 | Booking window is open (`now >= starts_at − booking_window_hours`) | 400 with the exact open time |
-| 6 | Member has an **active subscription at that gym** — `status = active` and today inside `current_period_start..end` | 403 "An active subscription at this gym is required" |
+| 6 | Member has an **active subscription at that gym** — `status = active` and `current_period_end >= today` (no start check: an early renewal moves the whole window forward while the member is still paid up) | 403 "An active subscription at this gym is required" |
 | 7 | Class-pack/PAYG credits left (see §4) | 403 with used/total counts |
 | 8 | No existing non-cancelled booking for this slot | 409 |
 | 9 | No overlapping confirmed/waitlisted booking (you can't be in two classes at once) | 409 naming the clashing class |
