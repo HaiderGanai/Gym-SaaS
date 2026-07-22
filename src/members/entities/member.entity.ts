@@ -46,8 +46,12 @@ export class Member {
   @Column({ type: 'date', nullable: true })
   resume_date!: Date;
 
+  // typed as plain `string` (not `string | null`) on purpose: this repo's
+  // tsconfig (isolatedModules) makes TS emit design:type "Object" for a
+  // `T | null` union, which TypeORM can't map to a column type — every other
+  // nullable column here (phone, invite_token, ...) follows the same pattern
   @Column({ nullable: true })
-  fcm_token!: string | null;
+  fcm_token!: string;
 
   @Column({ nullable: true })
   invite_token!: string;

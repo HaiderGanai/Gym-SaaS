@@ -71,7 +71,7 @@ export class NotificationsService {
       const result = await this.firebase.send(member.fcm_token, params.title, params.body, params.data);
       log.push_status = result === 'sent' ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
       if (result === 'token_invalid') {
-        await this.memberRepo.update(member.id, { fcm_token: null });
+        await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
       }
     }
 
@@ -94,7 +94,7 @@ export class NotificationsService {
     if (member.fcm_token) {
       const result = await this.firebase.send(member.fcm_token, params.title, params.body, params.data);
       log.push_status = result === 'sent' ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
-      if (result === 'token_invalid') await this.memberRepo.update(member.id, { fcm_token: null });
+      if (result === 'token_invalid') await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
     }
     await this.logRepo.save(log);
   }
@@ -247,7 +247,7 @@ export class NotificationsService {
   }
 
   async clearDeviceToken(user: MemberJwtPayload) {
-    await this.memberRepo.update(user.sub, { fcm_token: null });
+    await this.memberRepo.update(user.sub, { fcm_token: () => 'NULL' });
     return { message: 'Device token cleared' };
   }
 }
