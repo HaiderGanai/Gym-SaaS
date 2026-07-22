@@ -6,12 +6,45 @@ today. Source doc: `Gym_Management_SaaS_Feature_Specification v1.md` (repo root)
 Codebase reference: `CLAUDE.md`.
 
 **Headline finding:** the spec's entire MVP (Phase 1) is already built, and most of
-its Phase 2 is too. The backend is ahead of the document, not behind it. What's
-actually missing is narrow: two modules that were already scaffolded (entities +
-module shell only, no logic) — `CommunicationModule`'s push/notification-log side
-and all of `ReportsModule` — plus a handful of small fields/endpoints the spec calls
-out that nothing in the codebase currently covers. Nothing here requires a new
-architectural direction; it's additive to existing modules.
+its Phase 2 is too. The backend is ahead of the document, not behind it.
+
+**Update (2026-07-22): §4.4 Communication Suite is now implemented** — see §0
+below. What's left is narrower: `ReportsModule` (scaffolded, zero logic) plus a
+handful of small fields/endpoints the spec calls out that nothing in the codebase
+currently covers. Nothing here requires a new architectural direction; it's
+additive to existing modules.
+
+---
+
+## 0. Implemented since this document was first written
+
+**CommunicationModule + NotificationsModule (2026-07-22)** — the §4.4 gap
+(originally the largest one in this document) is closed. Every member-facing
+email now fires alongside a push notification (Firebase Cloud Messaging) and an
+in-app inbox row, from one shared dispatcher (`NotificationsService.notify()`).
+Delivered:
+- ✅ `NotificationLog` wired up for real — every send (email and/or push) writes
+  a row; it's simultaneously the delivery audit log and the member's in-app feed.
+- ✅ Push notifications — `FirebaseService` (FCM), boots best-effort off
+  `FIREBASE_SERVICE_ACCOUNT_PATH` (falls back to a gitignored dev/testing key).
+- ✅ Automated booking reminders — 15-minute cron, 2h lead time before class
+  start, email + push + log. This was the spec's Must-Have item that had zero
+  implementation before.
+- ✅ In-app email/push composer — `POST /communication/broadcast`
+  (org_admin/gym_manager), targets a gym's members (all, or a picked list).
+- ✅ Member notification inbox — `GET /notifications`,
+  `GET /notifications/unread-count`, `PATCH /notifications/:id/read`,
+  `PATCH /notifications/read-all`.
+- ✅ Device-token registration — `POST`/`DELETE /notifications/device-token`
+  (the `Member.fcm_token` column already existed but nothing populated it).
+
+Full detail: `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md`.
+
+**Still not done from the original §4.4 gap list:** SMS (still Could-Have/Phase 3
+in the spec; the push infrastructure built here makes SMS a smaller add later —
+same dispatcher, one more channel), an "email templates library" as a manageable/
+editable concept (templates are still inline HTML in `MailService`, not
+data-driven — not asked for, not blocking anything).
 
 ---
 
@@ -44,19 +77,18 @@ alongside classes) is the one Could-Have not present — no `Resource` entity ex
 | Discounts & promo codes | ✅ `PlansModule` discount CRUD, percentage/fixed, first-invoice-only |
 | Multi-currency (GBP/USD) | ⚠️ `currency` is a free-text column on `Organization`/`Invoice`/`PlatformPlan`, defaulted `'GBP'` — there's no per-gym override and nothing formats/validates against it; effectively "one currency per org," not true multi-currency |
 
-### 4.4 Communication Suite — **partially built**
-This is the biggest real gap, and it's already flagged in `CLAUDE.md` §7 as
-pending. What exists: `MailService` (Nodemailer) sending five hard-coded email
-templates (staff/member invite, subscription reminder, invoice, slot-disabled,
-waitlist-promoted, OTP). What's scaffolded but **not implemented**:
-- `NotificationLog` entity exists (`src/communication/entities/notification-log.entity.ts`)
-  but nothing ever writes a row to it — no service reads/writes it, so there is no
-  send history in the codebase today.
-- No `PushService` — no FCM/APNs integration at all.
-- No in-app composer endpoint (staff picking a segment/member and firing an email).
-- No "email templates library" concept — templates are inline HTML in `MailService`,
-  not a manageable set.
-- No SMS (spec marks this Could-Have / Phase 3 anyway).
+### 4.4 Communication Suite — **done** ✅ (2026-07-22)
+| Spec feature | Status |
+|---|---|
+| In-App Email Composer | ✅ `POST /communication/broadcast` — staff picks a gym (+ optional member list), fires email+push+inbox to every target |
+| Push Notification Manager | ✅ `FirebaseService` (FCM) — every member-facing event now pushes, not just emails |
+| Automated Booking Reminders | ✅ 15-min cron, 2h lead time, `Booking.reminder_sent_at` |
+| Email Templates Library | ⚠️ still inline HTML in `MailService`, not a manageable/editable set — not blocking, not asked for |
+| SMS Notifications | ❌ still missing (spec: Could-Have/Phase 3) — the new push dispatcher makes this a smaller add later (one more channel on the same `notify()` call) |
+
+See `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md` for
+full detail. `NotificationLog` (previously scaffolded with nothing writing to it)
+is now the live delivery log + member in-app inbox for every send.
 
 ### 4.5 Staff & Access Management — **done**, one gap
 | Spec feature | Status |
@@ -69,9 +101,11 @@ waitlist-promoted, OTP). What's scaffolded but **not implemented**:
 ### 5. Member Mobile App — **backend-ready**
 This section describes a mobile client, which is out of this backend's scope, but
 every API it needs already exists: dashboard data (`GET /subscriptions/me`,
-`GET /members/me`), slot browse/book/cancel/waitlist, push (not built, see 4.4),
-online payments view (`GET /invoices/me`), QR check-in, profile self-update. No
-backend gap beyond the push piece already noted.
+`GET /members/me`), slot browse/book/cancel/waitlist, push (✅ now built, see 4.4
+— the app just needs to call `POST /notifications/device-token` after login),
+online payments view (`GET /invoices/me`), QR check-in, profile self-update,
+in-app messaging/announcements feed (✅ `GET /notifications`). No backend gap
+remains for this section.
 
 ### 6. AI-Powered Features — **not started**
 `ReportsModule` is registered in `app.module.ts` and has `AiReport`/`OrgReport`
@@ -101,22 +135,22 @@ tracking since it gates the Communication Suite work in 4.4.
 
 ## 2. Consolidated gap list (what's actually missing)
 
-| # | Gap | Spec priority | Size | Blocks |
+| # | Gap | Spec priority | Size | Status |
 |---|---|---|---|---|
-| 1 | `ReportsModule` has zero logic — no daily AI report job, no controller, no email delivery | **Must-Have** (spec explicitly says build this first) | Medium | Nothing; self-contained |
-| 2 | `CommunicationModule`: no `NotificationLog` writes, no push service, no in-app composer endpoint | Must-Have (reminders/composer) / Should-Have (push infra) | Medium | Booking reminders, push notifications |
-| 3 | Automated booking reminders (X hours before class) | Must-Have | Small–Medium | Depends on #2's log + a cron |
-| 4 | Invoices are HTML-email only, no PDF | Must-Have | Small–Medium (new dependency) | Nothing; additive to `InvoicesModule` |
-| 5 | No CSV/Excel export (members, transactions, bookings) | Should-Have | Small | Nothing |
-| 6 | Churn-risk flagging | Should-Have (Phase 2) | Small | Feeds into #1's report once #1 exists |
-| 7 | GoCardless Direct Debit | Must-Have for UK per §3.1, but spec roadmap places it in Phase 2 | Large (new payment integration) | Nothing; parallel to Stripe |
-| 8 | Multi-currency (true per-gym currency, not just a stored string) | Should-Have | Small | Nothing |
-| 9 | GDPR/CCPA data export + erasure endpoints | Not in MVP list explicitly, but §3.2 says "day one" | Small–Medium | Marketing email composer (consent) |
-| 10 | Family/Group billing accounts | Could-Have | Medium (new relation) | Nothing |
-| 11 | Resource booking (rooms/equipment) | Could-Have | Medium | Nothing |
-| 12 | POS (retail/PT sessions) | Should-Have, but Phase 3 per roadmap | Large | Nothing |
-| 13 | SMS notifications | Could-Have, Phase 3 | Small (once #2 exists, it's a channel) | #2 |
-| 14 | Independent staff shift scheduling (not tied to a class) | Should-Have | Medium | Nothing |
+| ~~1~~ | ~~`CommunicationModule`: no `NotificationLog` writes, no push service, no in-app composer endpoint~~ | Must-Have / Should-Have | Medium | ✅ **Done 2026-07-22** — see §0 |
+| ~~2~~ | ~~Automated booking reminders (X hours before class)~~ | Must-Have | Small–Medium | ✅ **Done 2026-07-22** — see §0 |
+| 3 | `ReportsModule` has zero logic — no daily AI report job, no controller, no email delivery | **Must-Have** (spec explicitly says build this first) | Medium | Remaining |
+| 4 | Invoices are HTML-email only, no PDF | Must-Have | Small–Medium (new dependency) | Remaining |
+| 5 | No CSV/Excel export (members, transactions, bookings) | Should-Have | Small | Remaining |
+| 6 | Churn-risk flagging | Should-Have (Phase 2) | Small | Remaining — feeds into #3's report once it exists |
+| 7 | GoCardless Direct Debit | Must-Have for UK per §3.1, but spec roadmap places it in Phase 2 | Large (new payment integration) | Remaining |
+| 8 | Multi-currency (true per-gym currency, not just a stored string) | Should-Have | Small | Remaining |
+| 9 | GDPR/CCPA data export + erasure endpoints | Not in MVP list explicitly, but §3.2 says "day one" | Small–Medium | Remaining |
+| 10 | Family/Group billing accounts | Could-Have | Medium (new relation) | Remaining |
+| 11 | Resource booking (rooms/equipment) | Could-Have | Medium | Remaining |
+| 12 | POS (retail/PT sessions) | Should-Have, but Phase 3 per roadmap | Large | Remaining |
+| 13 | SMS notifications | Could-Have, Phase 3 | Small (push dispatcher already exists — one more channel) | Remaining |
+| 14 | Independent staff shift scheduling (not tied to a class) | Should-Have | Medium | Remaining |
 
 ---
 
@@ -124,7 +158,8 @@ tracking since it gates the Communication Suite work in 4.4.
 
 Given the spec's own phasing (§8) and how close this codebase already is to MVP +
 much of Phase 2, the sane order is: **finish what's already scaffolded before
-starting anything new.**
+starting anything new.** Step 2 (CommunicationModule) below is now done — see §0.
+Remaining, in order:
 
 **Step 1 — ReportsModule (AI daily report).** This is the one item the spec calls
 out by name as the highest-value, lowest-complexity AI feature, and it's the
@@ -143,20 +178,11 @@ already matches the spec's metrics). Build:
 - `OrgReport` follows the same shape one level up, generated monthly per §Build
   Status precedent ("monthly org-level report" already named in `CLAUDE.md` §7).
 
-**Step 2 — CommunicationModule completion.** Wire `NotificationLog` into
-`MailService` (log every send, success or failure — the entity and enum already
-support this, it's currently just unused). Add:
-- Automated booking reminders: a cron querying upcoming confirmed bookings within
-  a configurable window (e.g., 2h before `starts_at`) that haven't been reminded
-  yet (`NotificationLog` gives us the "already sent" check for free), emails via
-  existing `MailService` pattern.
-- In-app composer: `POST /communication/email` (staff, gym-scoped) taking a
-  segment filter (`all` / `gym_id` / `member_ids[]`) and subject/body, logging each
-  send.
-- Push notifications are a **separate decision point** — no FCM/APNs credentials
-  or SDK exist in this repo yet, and adding one is a real integration, not a small
-  change. Recommend scoping push to its own follow-up once reminders/composer (the
-  Must-Have items) are done, per spec's own Must-Have/Should-Have split in §4.4.
+**~~Step 2 — CommunicationModule completion.~~ ✅ Done 2026-07-22** — see §0 at
+the top of this document and `COMMUNICATION_MODULE_OVERVIEW.md` for the full
+implementation (push notifications included — the original plan below deferred
+push as "a separate decision point"; it turned out to be small enough to do in
+the same pass once a Firebase service account was available for testing).
 
 **Step 3 — Small, self-contained additions** (any order, each is a same-day change):
 - PDF invoices: add a lightweight PDF lib (none currently installed — `pdfkit` is
@@ -187,10 +213,11 @@ it earlier is dead code.
 
 ## 4. What this means practically
 
-If "small changes" is the actual budget, the realistic small-change set is:
-**Step 3 in full** (PDF invoices, CSV export, multi-currency override) — each is a
-same-day addition to an existing module with no new architecture. **Step 1 and 2**
-are real modules with crons, new endpoints, and (for Step 1) a provider decision;
-they're scoped small individually but aren't a "small change" in aggregate — they're
-the two modules `CLAUDE.md` already lists as pending, just newly justified by this
-spec rather than newly discovered.
+Of the two modules originally flagged as pending, **CommunicationModule is now
+done** (§0). What's left: **Step 1** (`ReportsModule` — a real module with a
+cron and an outstanding LLM-provider decision, not a small change) and
+**Step 3 in full** (PDF invoices, CSV export, multi-currency override — each a
+same-day addition to an existing module with no new architecture). Step 4's
+deferred items (GoCardless, POS, family accounts, resource booking, SMS, workout
+tracking, AI chat/NL reporting) remain correctly out of scope until their stated
+phase.

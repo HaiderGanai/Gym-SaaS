@@ -47,7 +47,7 @@ export class Member {
   resume_date!: Date;
 
   @Column({ nullable: true })
-  fcm_token!: string;
+  fcm_token!: string | null;
 
   @Column({ nullable: true })
   invite_token!: string;

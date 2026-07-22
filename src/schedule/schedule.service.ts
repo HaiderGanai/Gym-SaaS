@@ -10,7 +10,7 @@ import { Slot, SlotStatus } from './entities/slot.entity';
 import { Booking, BookingStatus } from '../bookings/entities/booking.entity';
 import { Gym } from '../gym/entities/gym.entity';
 import { StaffUser } from '../staff/entities/staff-user.entity';
-import { MailService } from '../communication/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { expandRrule } from './rrule.util';
 import { scopedGymIds, assertGymAccess } from '../common/utils/gym-scope';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
@@ -33,7 +33,7 @@ export class ScheduleService {
     @InjectRepository(Booking) private bookingRepo: Repository<Booking>,
     @InjectRepository(Gym) private gymRepo: Repository<Gym>,
     @InjectRepository(StaffUser) private staffRepo: Repository<StaffUser>,
-    private mailService: MailService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // ── Templates ────────────────────────────────────────────────────────────
@@ -244,11 +244,11 @@ export class ScheduleService {
     const affected = (slot.bookings ?? []).filter(
       (b) => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.WAITLISTED,
     );
-    // best-effort notifications — a dead mailbox must not undo the disable
+    // best-effort notifications — a dead mailbox/push must not undo the disable
     const results = await Promise.allSettled(
       affected.map((b) =>
-        this.mailService.sendSlotDisabled(
-          b.member.email, b.member.full_name, slot.activity_name, slot.starts_at, gym.name,
+        this.notificationsService.notifySlotDisabled(
+          b.member_id, gym.id, gym.name, slot.activity_name, slot.starts_at,
         ),
       ),
     );

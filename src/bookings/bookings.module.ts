@@ -8,13 +8,13 @@ import { Gym } from '../gym/entities/gym.entity';
 import { BookingsController, CheckinController, EntryQrController } from './bookings.controller';
 import { BookingsService } from './bookings.service';
 import { AuthModule } from '../auth/auth.module'; // exports JwtModule — QR signing
-import { CommunicationModule } from '../communication/communication.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Booking, Slot, MemberSubscription, Member, Gym]),
     AuthModule,
-    CommunicationModule,
+    NotificationsModule,
   ],
   controllers: [BookingsController, CheckinController, EntryQrController],
   providers: [BookingsService],

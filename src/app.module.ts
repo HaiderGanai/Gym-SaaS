@@ -14,6 +14,7 @@ import { VatModule } from './vat/vat.module';
 import { ClassScheduleModule } from './schedule/schedule.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { CommunicationModule } from './communication/communication.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ReportsModule } from './reports/reports.module';
 import { PlatformBillingModule } from './platform-billing/platform-billing.module';
 import { AppController } from './app.controller';
@@ -50,6 +51,7 @@ import { AppService } from './app.service';
     ClassScheduleModule,
     BookingsModule,
     CommunicationModule,
+    NotificationsModule,
     ReportsModule,
     PlatformBillingModule,
   ],

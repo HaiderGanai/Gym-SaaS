@@ -11,7 +11,7 @@ import { MemberSubscription, SubscriptionStatus } from '../subscriptions/entitie
 import { PlanType } from '../plans/entities/membership-plan.entity';
 import { Member, MemberStatus } from '../members/entities/member.entity';
 import { Gym } from '../gym/entities/gym.entity';
-import { MailService } from '../communication/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { scopedGymIds, assertGymAccess } from '../common/utils/gym-scope';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -25,7 +25,7 @@ export class BookingsService {
     @InjectRepository(Member) private memberRepo: Repository<Member>,
     @InjectRepository(Gym) private gymRepo: Repository<Gym>,
     private jwtService: JwtService,
-    private mailService: MailService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // ── Member: book a slot ──────────────────────────────────────────────────
@@ -176,13 +176,10 @@ export class BookingsService {
         promoted.waitlist_position = null;
         promoted.qr_token = this.bookingQr(promoted, slot);
         await this.bookingRepo.save(promoted);
-        // best-effort — a dead mailbox must not undo the promotion
+        // best-effort — a dead mailbox/push must not undo the promotion
         const gym = await this.gymRepo.findOneByOrFail({ id: slot.gym_id });
-        await this.mailService
-          .sendWaitlistPromoted(
-            promoted.member.email, promoted.member.full_name,
-            slot.activity_name, slot.starts_at, gym.name,
-          )
+        await this.notificationsService
+          .notifyWaitlistPromoted(promoted.member_id, gym.id, gym.name, slot.activity_name, slot.starts_at)
           .catch(() => undefined);
       } else {
         await this.slotRepo.createQueryBuilder()

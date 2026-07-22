@@ -63,7 +63,8 @@ Organization
 | `VatModule` | VAT calculation; VatPeriodSummary aggregation per gym |
 | `ClassScheduleModule` | SlotTemplate (RRULE) management; Slot instance generation |
 | `BookingsModule` | Booking creation; waitlist; QR check-in via signed JWT |
-| `CommunicationModule` | Email (Nodemailer); push notifications; NotificationLog |
+| `CommunicationModule` | `MailService` (Nodemailer) — the email half of every notification; owns `NotificationLog` entity definition |
+| `NotificationsModule` | The full member communication layer: pairs every member-facing email with a push notification (Firebase) and an in-app inbox row, automated pre-class booking reminders (cron), staff announcement broadcast, member notification inbox + device-token registration |
 | `ReportsModule` | AI daily report per gym (Gemini); monthly org-level report |
 | `PlatformBillingModule` | **Platform-level billing**: orgs pay the super_admin via Stripe. Platform plans (monthly/quarterly/yearly, priced per branch), checkout, webhooks, payment-method CRUD, grace-period cron, subscription lock (SubscriptionInterceptor) |
 
@@ -83,6 +84,7 @@ Organization
 - [x] **Member billing chain (manual v1)** — PlansModule (plan + discount CRUD), SubscriptionsModule (staff-led subscribe with promo code, renew, pause/resume/cancel, daily past_due cron), InvoicesModule (auto-generated per period, manual pay/refund/resend, VAT breakdown, per-gym invoice numbers), VatModule (tax calc, stored per-gym period summaries, live org rollup). No member payment processor — front desk collects cash/card and marks invoices paid. See `MEMBER_BILLING_MODULE_OVERVIEW.md` + `MEMBER_BILLING_POSTMAN_ENDPOINTS.md`.
 - [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
 - [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. See `BOOKINGS_MODULE_OVERVIEW.md` + `BOOKINGS_POSTMAN_ENDPOINTS.md`.
+- [x] **CommunicationModule + NotificationsModule** — every member-facing event (waitlist promotion, slot disabled, invoice ready, pre-class reminder, staff announcement) fires through one dispatcher that sends email (Nodemailer) + push (Firebase Cloud Messaging) + writes one `NotificationLog` row, independently best-effort per channel. Automated booking reminders (15-min cron, 2h lead time) is the previously-missing MVP feature from the feature spec. Member notification inbox (list/unread-count/mark-read/mark-all-read) + device-token registration (`POST/DELETE /notifications/device-token`). Staff announcement broadcast (`POST /communication/broadcast`) to a gym's members (all or a picked list). Owns `Booking.reminder_sent_at`. See `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md`.
 
 ### Active Endpoints
 
@@ -193,6 +195,13 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | GET | `/members/me/entry-qr` | MemberJwt | Gym-door entry QR; 403 without active subscription; `?gym_id=` |
 | POST | `/checkin/entry` | StaffJwt | Scan entry QR → `{ allowed, reason?, member, subscription? }` (live sub check) |
 | POST | `/checkin/booking` | StaffJwt | Scan class QR → marks checked_in; `{ allowed, reason?, member, class }` |
+| GET | `/notifications` | MemberJwt | Own notification feed (email+push events); `?unread_only=true` |
+| GET | `/notifications/unread-count` | MemberJwt | `{ unread_count }` |
+| PATCH | `/notifications/:id/read` | MemberJwt | Mark one notification read |
+| PATCH | `/notifications/read-all` | MemberJwt | Mark every unread notification read |
+| POST | `/notifications/device-token` | MemberJwt | `{ fcm_token }` — register this device for push |
+| DELETE | `/notifications/device-token` | MemberJwt | Clear the device token (e.g. on logout) |
+| POST | `/communication/broadcast` | StaffJwt + Roles(org_admin, gym_manager) | `{ gym_id, member_ids?, title, body }` — announcement to a gym's members (all, or a picked list); email + push + inbox |
 
 ### Key files
 
@@ -220,7 +229,16 @@ src/members/
 
 src/communication/
   communication.module.ts
-  mail.service.ts   ← sendStaffInvite, sendMemberInvite
+  mail.service.ts   ← every email template (invite, OTP, invoice, slot-disabled,
+      waitlist-promoted, booking-reminder, announcement, subscription-reminder)
+  entities/notification-log.entity.ts  ← DeliveryStatus enum; owned here, used by NotificationsModule
+
+src/notifications/
+  notifications.module.ts
+  notifications.controller.ts  ← NotificationsController (/notifications, member) + CommunicationController (/communication, staff)
+  notifications.service.ts     ← notify()/logDelivered() dispatch, typed triggers, booking-reminder cron (*/15 * * * *), broadcastAnnouncement()
+  firebase.service.ts          ← FCM wrapper; boots best-effort off FIREBASE_SERVICE_ACCOUNT_PATH, push silently disabled if unset/missing
+  dto/register-device-token.dto.ts, broadcast.dto.ts
 
 src/staff/
   staff.module.ts, staff.controller.ts, staff.service.ts
@@ -299,7 +317,7 @@ seed.js       ← creates super_admin + org + gym + org_admin; run with node see
 - [x] VatModule — computeTax(), VatPeriodSummary generation + filing; org rollup is a live query
 - [x] ClassScheduleModule — RRULE templates, slot materialization + cron, occurrence-level edits, disable/enable with notifications, member browse
 - [x] BookingsModule — booking gates, waitlist + promotion, class QR check-in, gym-door entry QR, no-show, staff roster
-- [ ] CommunicationModule — expand: PushService, NotificationLog, more email templates
+- [x] CommunicationModule + NotificationsModule — every member email paired with push (Firebase) + in-app inbox row, automated booking-reminder cron, staff announcement broadcast, device-token registration
 - [ ] ReportsModule — AiReport (daily, per gym, Gemini); OrgReport (monthly, all gyms)
 
 ## 8. Key Architectural Decisions
@@ -358,6 +376,18 @@ No payment processor for members yet — front desk collects cash/card in person
 **Bookings: subscription-gated, two QR codes, derived credits**
 Booking requires an active `MemberSubscription` at the slot's gym (the manual-billing collection lever: `past_due`/`paused` block booking). Capacity is claimed with one atomic `UPDATE … WHERE booking_count < capacity` (race-safe); full classes waitlist, and a confirmed cancellation promotes the lowest `waitlist_position` (QR issued + email, `booking_count` unchanged). `booking_count` counts confirmed only, and BookingsModule owns all its mutations. Class-pack/PAYG credits are derived — count of non-cancelled bookings at the gym in the current period vs `included_credits` — so in-time cancellation refunds automatically. Two signed-JWT QRs with distinct `typ` claims: the **class QR** (`booking_id + member_id + slot_id`, expires at slot end, issued on confirm/promotion) and the **gym-door entry QR** (`member_id + gym_id`, fetched on demand at `GET /members/me/entry-qr`, never stored, expires at `current_period_end`; the scan does one live DB check so pause/cancel revokes mid-period). Scan endpoints return `200 { allowed, reason }` for scanner UX instead of HTTP errors. Member cancel respects the slot's `cancellation_cutoff_hours`; `staff-cancel` overrides it. No unique (slot, member) constraint — cancelled rows must not block rebooking; a pre-query blocks duplicates.
 
+**Notifications: one dispatcher, two channels, one inbox row per event**
+`NotificationsService.notify()` is the single place every member-facing event goes through: waitlist promotion, slot disabled, invoice ready (auto-created and on manual resend), pre-class booking reminders, and staff-composed announcements. It looks the member up itself (callers only ever pass a `member_id`), attempts email (via `MailService`) and push (via `FirebaseService`/FCM) **independently** — one channel failing never blocks the other or the log write — and writes exactly **one** `NotificationLog` row per event (not per channel), which doubles as both the member's in-app notification feed and the delivery audit trail (`email_status`/`push_status` on the same row, so the inbox never shows duplicate entries for one event). `InvoicesService.resend()` is the one exception: it calls `MailService` directly so a failed resend still throws and tells staff (`notify()`'s contract is best-effort, the opposite of what an explicit "resend" needs), then logs the push+inbox side via `logInvoiceResent()` once the email is confirmed sent.
+
+**Push is optional infrastructure, not a hard dependency**
+`FirebaseService` boots off `FIREBASE_SERVICE_ACCOUNT_PATH` (falls back to a dev/testing key at `src/common/utils/*firebase-adminsdk*.json`, gitignored — real secret, never committed). If the file is missing, push is silently disabled at boot (logged once) and every `notify()` call still succeeds via email + the in-app log; nothing crashes. A `messaging/registration-token-not-registered` response clears the dead `Member.fcm_token` so a stale token stops being retried forever.
+
+**Automated booking reminders — the previously-missing MVP feature**
+A 15-minute cron (`NotificationsService.sendBookingReminders`) finds confirmed bookings whose slot starts within 2 hours and haven't been reminded yet (`Booking.reminder_sent_at IS NULL`, owned by NotificationsModule the same way BookingsModule owns `booking_count`), fires email+push+log per booking, and stamps `reminder_sent_at` so it's never sent twice — condition-based catch-up (like the existing past-due/grace crons), not a narrow time-window match, so a missed tick still catches up on the next run.
+
+**Announcements reuse the same dispatcher as system events**
+`POST /communication/broadcast` (org_admin/gym_manager) targets every active member of a gym, or a picked subset via `member_ids`, and fans out through the exact same `notify()` call each system-triggered event uses — so a manual "gym closed for maintenance" announcement gets the identical email+push+inbox treatment as an automatic waitlist promotion.
+
 ## 9. JWT Payload Shapes
 
 ### StaffJwtPayload
@@ -414,3 +444,4 @@ Re-run with `node seed.js` on a fresh DB. The seed org is created with `subscrip
 | `EMAIL_PASS` | Gmail app password |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_…` in dev) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_…`, from `stripe listen` in dev) |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to the Firebase Admin SDK service account JSON (push notifications). Falls back to a gitignored dev/testing key in `src/common/utils/`; if neither exists, push is silently disabled and email + in-app notifications still work |

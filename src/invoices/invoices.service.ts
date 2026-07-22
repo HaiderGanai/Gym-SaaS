@@ -11,6 +11,7 @@ import {
 } from '../subscriptions/entities/member-subscription.entity';
 import { VatService } from '../vat/vat.service';
 import { MailService } from '../communication/mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { scopedGymIds } from '../common/utils/gym-scope';
 import type { StaffJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
@@ -25,6 +26,7 @@ export class InvoicesService {
     private subRepo: Repository<MemberSubscription>,
     private vatService: VatService,
     private mailService: MailService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // Called by SubscriptionsService on create/renew. charge = price after discount.
@@ -51,7 +53,10 @@ export class InvoicesService {
       invoice_number: await this.nextInvoiceNumber(gym.id),
       ...(markPaid ? { paid_at: new Date(), payment_method: paymentMethod ?? 'cash' } : {}),
     });
-    return this.invoiceRepo.save(invoice);
+    const saved = await this.invoiceRepo.save(invoice);
+    // best-effort — a new invoice must exist even if email/push both fail
+    await this.notificationsService.notifyInvoiceReady(sub.member_id, gym, saved).catch(() => undefined);
+    return saved;
   }
 
   // ponytail: count-based sequence, unique enough per gym+year; DB sequence if gyms get busy
@@ -143,12 +148,15 @@ export class InvoicesService {
 
   async resend(id: string, user: StaffJwtPayload) {
     const invoice = await this.findOne(id, user);
+    // thrown, not swallowed — an explicit "resend" must tell staff if it failed
     await this.mailService.sendInvoiceEmail(
       invoice.member.email,
       invoice.member.full_name,
       invoice,
       invoice.gym.name,
     );
+    // email already confirmed sent above — this only logs it + fires push
+    await this.notificationsService.logInvoiceResent(invoice.member_id, invoice.gym, invoice).catch(() => undefined);
     return { message: `Invoice ${invoice.invoice_number} sent to ${invoice.member.email}` };
   }
 }

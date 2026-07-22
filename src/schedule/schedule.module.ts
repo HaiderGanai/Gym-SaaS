@@ -7,12 +7,12 @@ import { Gym } from '../gym/entities/gym.entity';
 import { StaffUser } from '../staff/entities/staff-user.entity';
 import { ScheduleController } from './schedule.controller';
 import { ScheduleService } from './schedule.service';
-import { CommunicationModule } from '../communication/communication.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SlotTemplate, Slot, Booking, Gym, StaffUser]),
-    CommunicationModule,
+    NotificationsModule,
   ],
   controllers: [ScheduleController],
   providers: [ScheduleService],

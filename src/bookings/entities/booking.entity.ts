@@ -56,6 +56,11 @@ export class Booking {
   @Column({ nullable: true })
   cancelled_at!: Date;
 
+  // owned by NotificationsModule — set once the pre-class reminder cron fires,
+  // same "who owns which column" split as BookingsModule owning Slot.booking_count
+  @Column({ nullable: true })
+  reminder_sent_at!: Date;
+
   @CreateDateColumn()
   created_at!: Date;
 }

@@ -209,6 +209,61 @@ export class MailService {
     }
   }
 
+  // sent X hours before a confirmed class (see NotificationsService cron)
+  async sendBookingReminder(
+    toEmail: string,
+    memberName: string,
+    activityName: string,
+    startsAt: Date,
+    gymName: string,
+  ): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `Reminder: ${activityName} is coming up`,
+        html: `
+          <h2>Hi ${memberName},</h2>
+          <p>Just a reminder about your upcoming class:</p>
+          <p style="padding:12px 16px;background:#eff6ff;border-radius:8px">
+            <strong>${activityName}</strong><br/>
+            ${new Date(startsAt).toUTCString()}<br/>
+            ${gymName}
+          </p>
+          <p>See you there!</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send booking reminder email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send booking reminder email');
+    }
+  }
+
+  // staff-composed broadcast to one/many/all members of a gym
+  async sendAnnouncement(
+    toEmail: string,
+    memberName: string,
+    gymName: string,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `${gymName}: ${title}`,
+        html: `
+          <h2>Hi ${memberName},</h2>
+          <p style="padding:12px 16px;background:#f9fafb;border-radius:8px;white-space:pre-line">${body}</p>
+          <p>— ${gymName}</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send announcement email to ${toEmail}`, err);
+      throw new InternalServerErrorException('Failed to send announcement email');
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';

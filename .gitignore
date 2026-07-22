@@ -54,3 +54,7 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Firebase service account keys — real secrets, never commit. Local/testing
+# use only; production reads the key path from FIREBASE_SERVICE_ACCOUNT_PATH.
+*firebase-adminsdk*.json
