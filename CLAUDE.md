@@ -77,7 +77,7 @@ Organization
 - [x] **MembersModule (partial)** — self-register, staff-invite flow, waiver signing
 - [x] **CommunicationModule (partial)** — `MailService` (staff invite email, member invite email)
 - [x] **OrganizationModule** — full CRUD (5 endpoints); super_admin creates/lists/deletes, org_admin reads/updates own org
-- [x] **GymModule** — full CRUD (5 endpoints); role-scoped list; org_admin + gym_manager can update; only super_admin/org_admin can delete
+- [x] **GymModule** — full CRUD (5 endpoints); role-scoped list; org_admin + gym_manager can update; only super_admin/org_admin can delete; branches carry a `type` (`general_gym`/`swimming`/`boxing`/`karate`/`mma`, defaults `general_gym`), surfaced on every gym response plus `GET /organizations/:id` and every login/invite-accept response
 - [x] **StaffModule (expanded)** — list, profile, update role/active, grant/revoke gym access (6 endpoints total)
 - [x] **MembersModule (expanded)** — list members, member profile (staff), member self-profile + self-update, update member status/pause/cancel (8 endpoints total)
 - [x] **PlatformBillingModule** — org self-signup, platform plan CRUD (Stripe Product/Price), Stripe Checkout, webhook handling, payment-method CRUD, branch-quantity upgrades, cancel, super_admin subscription admin, 3-day grace period with daily reminder cron, org branding (jsonb), subscription access lock
@@ -111,13 +111,13 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | POST | `/members/waiver` | MemberJwt | Authenticated member |
 | POST | `/organizations` | StaffJwt + Roles(super_admin) | Create org |
 | GET | `/organizations` | StaffJwt + Roles(super_admin) | List all orgs |
-| GET | `/organizations/:id` | StaffJwt + Roles(org_admin) | super_admin or own org_admin |
+| GET | `/organizations/:id` | StaffJwt + Roles(org_admin) | super_admin or own org_admin; includes full `gyms` relation (each with `type`) |
 | PATCH | `/organizations/:id` | StaffJwt + Roles(org_admin) | super_admin or own org_admin |
 | DELETE | `/organizations/:id` | StaffJwt + Roles(super_admin) | super_admin only |
-| POST | `/gyms` | StaffJwt + Roles(org_admin) | super_admin (needs org_id in body) or org_admin |
+| POST | `/gyms` | StaffJwt + Roles(org_admin) | super_admin (needs org_id in body) or org_admin; `type?` — one of `general_gym\|swimming\|boxing\|karate\|mma`, defaults `general_gym` |
 | GET | `/gyms` | StaffJwt | All staff — result scoped by role |
 | GET | `/gyms/:id` | StaffJwt | All staff — service checks access |
-| PATCH | `/gyms/:id` | StaffJwt + Roles(org_admin, gym_manager) | super_admin, org_admin (own org), gym_manager (assigned) |
+| PATCH | `/gyms/:id` | StaffJwt + Roles(org_admin, gym_manager) | super_admin, org_admin (own org), gym_manager (assigned); `type?` accepted same as create |
 | DELETE | `/gyms/:id` | StaffJwt + Roles(org_admin) | super_admin or org_admin (own org) |
 | GET | `/staff` | StaffJwt | All staff — result scoped by role |
 | GET | `/staff/:id` | StaffJwt | super_admin, org_admin (own org), gym colleagues, self |
@@ -345,7 +345,7 @@ Global guards run before route-level JWT guards (so `request.user` wouldn't exis
 One Stripe Price per plan; checkout quantity = branches paid for. `GymService.create` blocks creating more gyms than `OrgSubscription.branch_count` (orgs without a sub row — e.g. seeded — are not limited). `POST /platform/billing/quantity` updates the Stripe subscription with proration.
 
 **Org branding ships in the login response**
-`POST /auth/staff/login`, `POST /auth/member/login` and both invite-accept endpoints return `organization: { id, name, logo_url, branding }` alongside `access_token`, so the app can theme itself before making any authenticated call. Staff orgs resolve via `organization_id` (null for super_admin → `organization: null`); members resolve via their `primary_gym_id` → gym → organization. `branding.primary_color` / `branding.secondary_color` / `branding.accent` / `branding.logo_url` are **guaranteed present** — platform defaults (`#111827` / `#6B7280` / `#F59E0B` / null) fill anything the org hasn't customized. All three colors are validated hex, top-level fields on `PATCH /organizations/:id` (stored inside `branding`, same pattern as `accent`).
+`POST /auth/staff/login`, `POST /auth/member/login` and both invite-accept endpoints return `organization: { id, name, logo_url, branding, gyms }` alongside `access_token`, so the app can theme itself before making any authenticated call. Staff orgs resolve via `organization_id` (null for super_admin → `organization: null`); members resolve via their `primary_gym_id` → gym → organization. `branding.primary_color` / `branding.secondary_color` / `branding.accent` / `branding.logo_url` are **guaranteed present** — platform defaults (`#111827` / `#6B7280` / `#F59E0B` / null) fill anything the org hasn't customized. All three colors are validated hex, top-level fields on `PATCH /organizations/:id` (stored inside `branding`, same pattern as `accent`). `gyms` is a lean `{ id, name, type }[]` projection of every branch in the org (not the full `Gym` row — this is a login bootstrap payload, not the admin gym-detail view) built from a relation load in `AuthService.orgBranding()`/`orgBrandingByGym()`, so the app knows each branch's specialization (`general_gym`/`swimming`/`boxing`/`karate`/`mma`) before making any authenticated call too.
 
 **Org branding is a jsonb blob**
 `Organization.branding` (jsonb) holds the org's app theme (colors, fonts, sizes). Updated through the existing `PATCH /organizations/:id`; the frontend owns the shape. Updates **merge** into the existing blob. `accent` is a top-level DTO field (hex-validated) stored as `branding.accent`. The same endpoint accepts multipart/form-data with a `logo` image file (≤2 MB) uploaded to **Cloudinary** (`gym-saas/org-logos` folder) and saved as `logo_url` — env vars `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET`. On multipart requests `branding` arrives as a JSON string and is parsed by a `@Transform` in the DTO.

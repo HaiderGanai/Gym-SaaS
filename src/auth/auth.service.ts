@@ -93,22 +93,29 @@ export class AuthService {
 
   private async orgBranding(orgId: string | null) {
     if (!orgId) return null;
-    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const org = await this.orgRepo.findOne({
+      where: { id: orgId },
+      relations: { gyms: true },
+    });
     return org ? this.brandingShape(org) : null;
   }
 
   // members have no org_id — their organization is reached through the primary gym
   private async orgBrandingByGym(gymId?: string) {
     if (!gymId) return null;
-    const org = await this.orgRepo.createQueryBuilder('o')
+    const org = await this.orgRepo
+      .createQueryBuilder('o')
       .innerJoin('o.gyms', 'g', 'g.id = :gymId', { gymId })
+      .leftJoinAndSelect('o.gyms', 'gyms')
       .getOne();
     return org ? this.brandingShape(org) : null;
   }
 
   // primary_color / secondary_color / accent / logo_url are guaranteed present —
   // platform defaults fill anything the org hasn't customized, so the UI can
-  // always theme itself straight off the login response
+  // always theme itself straight off the login response. `gyms` is a lean
+  // id/name/type projection, not the full Gym row — this payload is a login
+  // bootstrap, not the admin gym-detail view (that's GET /gyms/:id).
   private brandingShape(org: Organization) {
     const b = org.branding ?? {};
     return {
@@ -122,6 +129,11 @@ export class AuthService {
         accent: b.accent ?? '#F59E0B',
         logo_url: b.logo_url ?? org.logo_url ?? null,
       },
+      gyms: (org.gyms ?? []).map((g) => ({
+        id: g.id,
+        name: g.name,
+        type: g.type,
+      })),
     };
   }
 

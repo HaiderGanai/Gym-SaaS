@@ -37,6 +37,7 @@ export class GymService {
       name: dto.name,
       address: dto.address,
       timezone: dto.timezone,
+      type: dto.type,
       tax_mode: dto.tax_mode,
       default_tax_rate: dto.default_tax_rate,
       tax_inclusive: dto.tax_inclusive,

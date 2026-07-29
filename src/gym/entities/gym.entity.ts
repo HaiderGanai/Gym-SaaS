@@ -22,6 +22,14 @@ export enum TaxMode {
   NONE = 'none',
 }
 
+export enum GymType {
+  GENERAL_GYM = 'general_gym',
+  SWIMMING = 'swimming',
+  BOXING = 'boxing',
+  KARATE = 'karate',
+  MMA = 'mma',
+}
+
 @Entity('gyms')
 export class Gym {
   @PrimaryGeneratedColumn('uuid')
@@ -42,6 +50,9 @@ export class Gym {
 
   @Column({ nullable: true })
   timezone!: string;
+
+  @Column({ type: 'enum', enum: GymType, default: GymType.GENERAL_GYM })
+  type!: GymType;
 
   @Column({ type: 'enum', enum: TaxMode, default: TaxMode.VAT })
   tax_mode!: TaxMode;

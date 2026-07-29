@@ -1,7 +1,7 @@
 import {
   IsString, IsOptional, IsUUID, IsEnum, IsNumber, IsBoolean, Min, Max, MaxLength,
 } from 'class-validator';
-import { TaxMode } from '../entities/gym.entity';
+import { TaxMode, GymType } from '../entities/gym.entity';
 
 export class CreateGymDto {
   @IsUUID()
@@ -19,6 +19,11 @@ export class CreateGymDto {
   @IsString()
   @IsOptional()
   timezone?: string;
+
+  // defaults to General Gym on the entity if omitted
+  @IsEnum(GymType)
+  @IsOptional()
+  type?: GymType;
 
   @IsEnum(TaxMode)
   @IsOptional()

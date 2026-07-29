@@ -42,7 +42,10 @@ export class OrganizationService {
   }
 
   async findOne(id: string, user: StaffJwtPayload): Promise<Organization> {
-    const org = await this.orgRepo.findOne({ where: { id } });
+    const org = await this.orgRepo.findOne({
+      where: { id },
+      relations: { gyms: true },
+    });
     if (!org) throw new NotFoundException('Organization not found');
     if (user.role !== StaffRole.SUPER_ADMIN && user.org_id !== id) {
       throw new ForbiddenException('Access denied');

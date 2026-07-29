@@ -1,7 +1,7 @@
 import {
   IsString, IsOptional, IsEnum, IsNumber, IsBoolean, Min, Max, MaxLength,
 } from 'class-validator';
-import { TaxMode } from '../entities/gym.entity';
+import { TaxMode, GymType } from '../entities/gym.entity';
 
 export class UpdateGymDto {
   @IsString()
@@ -16,6 +16,10 @@ export class UpdateGymDto {
   @IsString()
   @IsOptional()
   timezone?: string;
+
+  @IsEnum(GymType)
+  @IsOptional()
+  type?: GymType;
 
   @IsEnum(TaxMode)
   @IsOptional()
