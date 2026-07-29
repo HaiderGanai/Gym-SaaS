@@ -60,7 +60,10 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const gym_ids = await this.staffService.getActiveGymIds(staff.id);
     const payload: StaffJwtPayload = { sub: staff.id, email: staff.email, role: staff.role, org_id: staff.organization_id, gym_ids };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBranding(staff.organization_id) };
+    return {
+      access_token: this.jwtService.sign(payload),
+      organization: await this.orgBranding(staff.organization_id, staff.role, gym_ids),
+    };
   }
 
   async loginMember(dto: MemberLoginDto) {
@@ -70,54 +73,85 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id, gym_ids) };
   }
 
   async acceptStaffInvite(dto: AcceptInviteDto) {
     const staff = await this.staffService.acceptInvite(dto.token, dto.password);
     const gym_ids = await this.staffService.getActiveGymIds(staff.id);
     const payload: StaffJwtPayload = { sub: staff.id, email: staff.email, role: staff.role, org_id: staff.organization_id, gym_ids };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBranding(staff.organization_id) };
+    return {
+      access_token: this.jwtService.sign(payload),
+      organization: await this.orgBranding(staff.organization_id, staff.role, gym_ids),
+    };
   }
 
   async acceptMemberInvite(dto: AcceptMemberInviteDto) {
     const member = await this.membersService.acceptMemberInvite(dto);
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id) };
+    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id, gym_ids) };
   }
 
   // ── Org branding at login ────────────────────────────────────────────────────
   // Shipped with every login/invite-accept response so the app can theme itself
   // before making any authenticated call. null for super_admin (no org).
 
-  private async orgBranding(orgId: string | null) {
+  // org_admin needs every branch (org-wide admin surface); everyone else
+  // (gym_manager / front_desk) only ever needs their own affiliated branch(es)
+  private async orgBranding(
+    orgId: string | null,
+    role: StaffRole,
+    gymIds: string[],
+  ) {
     if (!orgId) return null;
     const org = await this.orgRepo.findOne({
       where: { id: orgId },
       relations: { gyms: true },
     });
-    return org ? this.brandingShape(org) : null;
+    if (!org) return null;
+    return this.brandingShape(
+      org,
+      role === StaffRole.ORG_ADMIN ? null : gymIds,
+    );
   }
 
-  // members have no org_id — their organization is reached through the primary gym
-  private async orgBrandingByGym(gymId?: string) {
-    if (!gymId) return null;
+  // members have no org_id — their organization is reached through the primary
+  // gym. Always scoped to the member's own branch(es) — never the full list.
+  private async orgBrandingByGym(
+    primaryGymId: string | undefined,
+    gymIds: string[],
+  ) {
+    if (!primaryGymId) return null;
     const org = await this.orgRepo
       .createQueryBuilder('o')
-      .innerJoin('o.gyms', 'g', 'g.id = :gymId', { gymId })
+      .innerJoin('o.gyms', 'g', 'g.id = :gymId', { gymId: primaryGymId })
       .leftJoinAndSelect('o.gyms', 'gyms')
       .getOne();
-    return org ? this.brandingShape(org) : null;
+    return org ? this.brandingShape(org, gymIds) : null;
   }
 
   // primary_color / secondary_color / accent / logo_url are guaranteed present —
   // platform defaults fill anything the org hasn't customized, so the UI can
-  // always theme itself straight off the login response. `gyms` is a lean
-  // id/name/type projection, not the full Gym row — this payload is a login
-  // bootstrap, not the admin gym-detail view (that's GET /gyms/:id).
-  private brandingShape(org: Organization) {
+  // always theme itself straight off the login response.
+  //
+  // `scopedGymIds === null` → org_admin: every branch in the org, key `gyms`.
+  // `scopedGymIds` an array → everyone else: only the caller's own branch(es)
+  // (handles multi-branch affiliation — front desk/manager/member staffed at
+  // more than one gym get all of them), key `branch`. Either way the entries
+  // are a lean id/name/type projection, not the full Gym row — this payload is
+  // a login bootstrap, not the admin gym-detail view (that's GET /gyms/:id).
+  private brandingShape(org: Organization, scopedGymIds: string[] | null) {
     const b = org.branding ?? {};
+    const allBranches = (org.gyms ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      type: g.type,
+    }));
+    const branchField =
+      scopedGymIds === null
+        ? { gyms: allBranches }
+        : { branch: allBranches.filter((g) => scopedGymIds.includes(g.id)) };
     return {
       id: org.id,
       name: org.name,
@@ -129,11 +163,7 @@ export class AuthService {
         accent: b.accent ?? '#F59E0B',
         logo_url: b.logo_url ?? org.logo_url ?? null,
       },
-      gyms: (org.gyms ?? []).map((g) => ({
-        id: g.id,
-        name: g.name,
-        type: g.type,
-      })),
+      ...branchField,
     };
   }
 

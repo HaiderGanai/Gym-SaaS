@@ -31,8 +31,11 @@ export class OrganizationController {
     return this.orgService.findAll();
   }
 
+  // any staff of the org (org_admin, gym_manager, front_desk) — the service
+  // scopes what comes back: full `gyms` for org_admin, own-branch(es) `branch`
+  // for everyone else. super_admin bypasses @Roles entirely.
   @Get(':id')
-  @Roles(StaffRole.ORG_ADMIN)
+  @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER, StaffRole.FRONT_DESK)
   findOne(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: StaffJwtPayload,

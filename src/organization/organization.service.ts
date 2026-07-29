@@ -41,7 +41,10 @@ export class OrganizationService {
     return this.orgRepo.find({ order: { created_at: 'DESC' } });
   }
 
-  async findOne(id: string, user: StaffJwtPayload): Promise<Organization> {
+  // org_admin/super_admin see every branch (full `gyms`); gym_manager/front_desk
+  // only their own affiliated branch(es) — same scoping rule AuthService uses
+  // at login, key `branch` instead of `gyms` (handles multi-branch staff too).
+  async findOne(id: string, user: StaffJwtPayload) {
     const org = await this.orgRepo.findOne({
       where: { id },
       relations: { gyms: true },
@@ -50,7 +53,20 @@ export class OrganizationService {
     if (user.role !== StaffRole.SUPER_ADMIN && user.org_id !== id) {
       throw new ForbiddenException('Access denied');
     }
-    return org;
+    if (
+      user.role === StaffRole.SUPER_ADMIN ||
+      user.role === StaffRole.ORG_ADMIN
+    ) {
+      return org;
+    }
+
+    const { gyms, ...rest } = org;
+    return {
+      ...rest,
+      branch: gyms
+        .filter((g) => user.gym_ids.includes(g.id))
+        .map((g) => ({ id: g.id, name: g.name, type: g.type })),
+    };
   }
 
   async update(
