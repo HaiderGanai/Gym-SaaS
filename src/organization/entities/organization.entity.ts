@@ -1,6 +1,5 @@
 // organization/entities/organization.entity.ts
 import { Gym } from 'src/gym/entities/gym.entity';
-import { OrgReport } from 'src/reports/entities/org-report.entity';
 import { StaffUser } from 'src/staff/entities/staff-user.entity';
 import { SubscriptionStatus } from 'src/platform-billing/entities/subscription-status.enum';
 import { VatPeriodSummary } from 'src/vat/entities/vat-period-summary.entity';
@@ -45,7 +44,4 @@ export class Organization {
 
   @OneToMany(() => VatPeriodSummary, (vat) => vat.organization)
   vat_summaries!: VatPeriodSummary[];
-
-  @OneToMany(() => OrgReport, (report) => report.organization)
-  org_reports!: OrgReport[];
 }

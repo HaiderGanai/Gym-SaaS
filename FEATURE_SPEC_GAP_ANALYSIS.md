@@ -9,10 +9,16 @@ Codebase reference: `CLAUDE.md`.
 its Phase 2 is too. The backend is ahead of the document, not behind it.
 
 **Update (2026-07-22): §4.4 Communication Suite is now implemented** — see §0
-below. What's left is narrower: `ReportsModule` (scaffolded, zero logic) plus a
-handful of small fields/endpoints the spec calls out that nothing in the codebase
-currently covers. Nothing here requires a new architectural direction; it's
-additive to existing modules.
+below.
+
+**Update (2026-07-29): §6/§7 Reporting & Analytics is now implemented, minus
+AI** — see §0 below. `ReportsModule` ships live statistics endpoints and a
+daily digest email; the spec's AI-summarization layer (Gemini/OpenAI) was
+explicitly deprioritized by product decision, not a technical gap.
+
+What's left is narrower: a handful of small fields/endpoints the spec calls
+out that nothing in the codebase currently covers. Nothing here requires a
+new architectural direction; it's additive to existing modules.
 
 ---
 
@@ -45,6 +51,28 @@ in the spec; the push infrastructure built here makes SMS a smaller add later �
 same dispatcher, one more channel), an "email templates library" as a manageable/
 editable concept (templates are still inline HTML in `MailService`, not
 data-driven — not asked for, not blocking anything).
+
+**ReportsModule (2026-07-29)** — explicitly scoped as **statistics, not AI**
+by product decision: "we won't go with [AI] right now." Delivered:
+- ✅ `GET /reports/gyms/:gymId/stats` — per-gym revenue (+ payment-method
+  split), bookings, attendance/fill-rate, no-show rate, new members, active
+  members, active/cancelled subscriptions, churn rate. Live query, any date
+  range.
+- ✅ `GET /reports/org/stats` — org-wide rollup + per-gym breakdown, same
+  metrics, rates recomputed from summed counts (not averaged).
+- ✅ Automated end-of-day digest email — daily 23:55 cron, every active
+  org_admin, today's revenue/bookings/new-members/cancelled-subscriptions,
+  per-branch table if the org has more than one gym.
+- ❌ **Deliberately not built**: LLM-generated narrative summary, churn
+  *prediction* (flagging individual at-risk members), natural-language
+  reporting queries — all correctly Phase 2/3 per the spec's own roadmap, and
+  explicitly deferred by product decision for the statistics-only layer too.
+- The original `AiReport`/`OrgReport` entity stubs (dead code — zero service,
+  zero controller, never read anywhere) were deleted rather than repurposed;
+  `ReportsModule` computes everything live instead of storing snapshots, same
+  precedent `VatService.orgRollup()` already set.
+
+Full detail: `REPORTS_MODULE_OVERVIEW.md` + `REPORTS_POSTMAN_ENDPOINTS.md`.
 
 ---
 
@@ -107,22 +135,23 @@ online payments view (`GET /invoices/me`), QR check-in, profile self-update,
 in-app messaging/announcements feed (✅ `GET /notifications`). No backend gap
 remains for this section.
 
-### 6. AI-Powered Features — **not started**
-`ReportsModule` is registered in `app.module.ts` and has `AiReport`/`OrgReport`
-entities defined with the exact shape the spec implies (`raw_metrics` jsonb with
-bookings/revenue/check-ins/no-shows/new-members/failed-payments/churn-risk-members
-on `AiReport`; per-gym rollup + org totals on `OrgReport`) — but there is **no
-service, no controller, no cron, and no LLM call**. It's a schema with nothing
-behind it. This is exactly `CLAUDE.md`'s "Automated Daily Report Generation" —
-the spec's own recommended **first AI feature to build** (§6 implementation
-note) — and it's the most-scaffolded, least-built piece of the whole codebase.
-Member Communication Assistant, Smart Booking Recommendations, Churn Prediction,
-Chat Support, NL Reporting are all correctly Phase 2/3 and not expected yet.
+### 6. AI-Powered Features — **statistics layer done (2026-07-29), AI layer explicitly deferred**
+"Automated Daily Report Generation" is built as a pure-statistics feature — a
+daily digest email to every org_admin with revenue/bookings/new-members/
+cancelled-subscriptions — but with **no LLM call**, by explicit product
+decision ("we won't go with [AI] right now"). The original `AiReport`/
+`OrgReport` entity stubs this section used to describe were dead code (never
+had a service/controller/cron behind them) and have been deleted; `ReportsModule`
+computes everything live instead. Member Communication Assistant, Smart
+Booking Recommendations, Churn *Prediction* (flagging individual at-risk
+members), Chat Support, and NL Reporting remain correctly un-built —
+Phase 2/3 items, not expected yet.
 
-### 7. Reporting & Analytics — **partially covered by raw data, no reports**
-Revenue, attendance, growth/churn numbers are all derivable from existing tables
-(`Invoice`, `Booking`, `MemberSubscription`) via ad-hoc queries, but there is no
-report-generation endpoint and no CSV/Excel export anywhere in the codebase.
+### 7. Reporting & Analytics — **done** ✅ (2026-07-29)
+Revenue, attendance, growth/churn numbers are now exposed as live statistics
+endpoints (`GET /reports/gyms/:gymId/stats`, `GET /reports/org/stats`) instead
+of sitting only in raw tables — see §0. No CSV/Excel export yet (still a gap,
+see consolidated list #5).
 
 ### 3.2 Compliance — **not addressed**
 No explicit GDPR/CCPA workflow: no data-export endpoint, no right-to-erasure
@@ -139,10 +168,10 @@ tracking since it gates the Communication Suite work in 4.4.
 |---|---|---|---|---|
 | ~~1~~ | ~~`CommunicationModule`: no `NotificationLog` writes, no push service, no in-app composer endpoint~~ | Must-Have / Should-Have | Medium | ✅ **Done 2026-07-22** — see §0 |
 | ~~2~~ | ~~Automated booking reminders (X hours before class)~~ | Must-Have | Small–Medium | ✅ **Done 2026-07-22** — see §0 |
-| 3 | `ReportsModule` has zero logic — no daily AI report job, no controller, no email delivery | **Must-Have** (spec explicitly says build this first) | Medium | Remaining |
+| ~~3~~ | ~~`ReportsModule` has zero logic — no daily report job, no controller, no email delivery~~ | **Must-Have** (spec explicitly says build this first) | Medium | ✅ **Done 2026-07-29** — statistics only, no AI (product decision) — see §0 |
 | 4 | Invoices are HTML-email only, no PDF | Must-Have | Small–Medium (new dependency) | Remaining |
 | 5 | No CSV/Excel export (members, transactions, bookings) | Should-Have | Small | Remaining |
-| 6 | Churn-risk flagging | Should-Have (Phase 2) | Small | Remaining — feeds into #3's report once it exists |
+| 6 | Churn-risk *flagging* (naming individual at-risk members) | Should-Have (Phase 2) | Small | Remaining — churn *rate* is now surfaced (#3), per-member risk flagging is not |
 | 7 | GoCardless Direct Debit | Must-Have for UK per §3.1, but spec roadmap places it in Phase 2 | Large (new payment integration) | Remaining |
 | 8 | Multi-currency (true per-gym currency, not just a stored string) | Should-Have | Small | Remaining |
 | 9 | GDPR/CCPA data export + erasure endpoints | Not in MVP list explicitly, but §3.2 says "day one" | Small–Medium | Remaining |
@@ -161,22 +190,16 @@ much of Phase 2, the sane order is: **finish what's already scaffolded before
 starting anything new.** Step 2 (CommunicationModule) below is now done — see §0.
 Remaining, in order:
 
-**Step 1 — ReportsModule (AI daily report).** This is the one item the spec calls
-out by name as the highest-value, lowest-complexity AI feature, and it's the
-furthest-along "started but not built" module in the repo (entities exist, shape
-already matches the spec's metrics). Build:
-- `ReportsService.collectDailyMetrics(gymId, date)` — aggregate from existing
-  `Booking`/`Invoice`/`MemberSubscription` tables (no new source data needed).
-- One LLM call (need to pick a provider — spec says OpenAI, but this repo's
-  `CLAUDE.md` earlier referenced Gemini for reports; needs a decision, not a
-  default) to turn `raw_metrics` into `summary`.
-- A daily cron (mirrors the existing `@nestjs/schedule` pattern already used for
-  the slot-materialization and past-due crons) that generates + emails the report
-  to each gym's manager(s).
-- `GET /reports/daily?gym_id=&date=` for on-demand admin-panel viewing of past
-  reports (list already-generated `AiReport` rows).
-- `OrgReport` follows the same shape one level up, generated monthly per §Build
-  Status precedent ("monthly org-level report" already named in `CLAUDE.md` §7).
+**~~Step 1 — ReportsModule (daily report).~~ ✅ Done 2026-07-29** — see §0 at
+the top of this document and `REPORTS_MODULE_OVERVIEW.md` for the full
+implementation. Built as **live statistics endpoints + a daily digest email**,
+not an LLM-summarized report — the AI/LLM-provider decision this step
+originally flagged as blocking was resolved by removing AI from scope
+entirely, not by picking a provider. On-demand viewing is the two live
+endpoints (`GET /reports/gyms/:gymId/stats`, `GET /reports/org/stats` with
+`?period_start=&period_end=`) rather than a stored-report list — there's
+nothing to page through because nothing is stored; any historical range is
+just a different query.
 
 **~~Step 2 — CommunicationModule completion.~~ ✅ Done 2026-07-22** — see §0 at
 the top of this document and `COMMUNICATION_MODULE_OVERVIEW.md` for the full
@@ -213,11 +236,13 @@ it earlier is dead code.
 
 ## 4. What this means practically
 
-Of the two modules originally flagged as pending, **CommunicationModule is now
-done** (§0). What's left: **Step 1** (`ReportsModule` — a real module with a
-cron and an outstanding LLM-provider decision, not a small change) and
-**Step 3 in full** (PDF invoices, CSV export, multi-currency override — each a
-same-day addition to an existing module with no new architecture). Step 4's
-deferred items (GoCardless, POS, family accounts, resource booking, SMS, workout
-tracking, AI chat/NL reporting) remain correctly out of scope until their stated
-phase.
+Of the two modules originally flagged as pending, both are now done:
+**CommunicationModule** (§0, 2026-07-22) and **ReportsModule** (§0, 2026-07-29,
+statistics only — AI narration explicitly out of scope by product decision).
+What's left is **Step 3 in full** (PDF invoices, CSV export, multi-currency
+override — each a same-day addition to an existing module with no new
+architecture), plus Step 3's now-obvious follow-on: CSV export for the new
+`/reports/*` endpoints would be a natural extension of gap #5 once that step
+is picked up. Step 4's deferred items (GoCardless, POS, family accounts,
+resource booking, SMS, workout tracking, AI chat/NL reporting, churn-*prediction*
+flagging) remain correctly out of scope until their stated phase.

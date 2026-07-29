@@ -65,7 +65,7 @@ Organization
 | `BookingsModule` | Booking creation; waitlist; QR check-in via signed JWT |
 | `CommunicationModule` | `MailService` (Nodemailer) — the email half of every notification; owns `NotificationLog` entity definition |
 | `NotificationsModule` | The full member communication layer: pairs every member-facing email with a push notification (Firebase) and an in-app inbox row, automated pre-class booking reminders (cron), staff announcement broadcast, member notification inbox + device-token registration |
-| `ReportsModule` | AI daily report per gym (Gemini); monthly org-level report |
+| `ReportsModule` | Live statistics for staff dashboards: revenue, bookings, attendance, no-shows, fill rate, churn — per gym and org-wide rollup. End-of-day digest email to every org_admin. No AI/LLM — pure SQL aggregation |
 | `PlatformBillingModule` | **Platform-level billing**: orgs pay the super_admin via Stripe. Platform plans (monthly/quarterly/yearly, priced per branch), checkout, webhooks, payment-method CRUD, grace-period cron, subscription lock (SubscriptionInterceptor) |
 
 ## 6. Build Status
@@ -85,6 +85,7 @@ Organization
 - [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
 - [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. See `BOOKINGS_MODULE_OVERVIEW.md` + `BOOKINGS_POSTMAN_ENDPOINTS.md`.
 - [x] **CommunicationModule + NotificationsModule** — every member-facing event (waitlist promotion, slot disabled, invoice ready, pre-class reminder, staff announcement) fires through one dispatcher that sends email (Nodemailer) + push (Firebase Cloud Messaging) + writes one `NotificationLog` row, independently best-effort per channel. Automated booking reminders (15-min cron, 2h lead time) is the previously-missing MVP feature from the feature spec. Member notification inbox (list/unread-count/mark-read/mark-all-read) + device-token registration (`POST/DELETE /notifications/device-token`). Staff announcement broadcast (`POST /communication/broadcast`) to a gym's members (all or a picked list). Owns `Booking.reminder_sent_at`. See `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md`.
+- [x] **ReportsModule** — live per-gym stats (`GET /reports/gyms/:gymId/stats`) and org-wide rollup + per-gym breakdown (`GET /reports/org/stats`): revenue (+ payment-method split), bookings, attendance/fill-rate, no-show rate, new members, churn rate — all `?period_start=&period_end=`, computed on request, nothing stored. Daily 23:55 cron emails every active org_admin an end-of-day digest (today's revenue, bookings, new members, cancelled subscriptions) via `MailService.sendDailyDigest()` directly (org_admin is staff, not a member — bypasses `NotificationsService`). No AI/LLM summarization — deliberately deferred from the feature spec's "AI daily report." See `REPORTS_MODULE_OVERVIEW.md` + `REPORTS_POSTMAN_ENDPOINTS.md`.
 
 ### Active Endpoints
 
@@ -202,6 +203,8 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | POST | `/notifications/device-token` | MemberJwt | `{ fcm_token }` — register this device for push |
 | DELETE | `/notifications/device-token` | MemberJwt | Clear the device token (e.g. on logout) |
 | POST | `/communication/broadcast` | StaffJwt + Roles(org_admin, gym_manager) | `{ gym_id, member_ids?, title, body }` — announcement to a gym's members (all, or a picked list); email + push + inbox |
+| GET | `/reports/gyms/:gymId/stats` | StaffJwt + Roles(org_admin, gym_manager) | Live per-gym stats; `?period_start=&period_end=` (required, `period_end` exclusive) |
+| GET | `/reports/org/stats` | StaffJwt + Roles(org_admin) | Live org-wide rollup + per-gym breakdown; `?period_start=&period_end=`; super_admin gets 400 (use per-gym instead) |
 
 ### Key files
 
@@ -299,6 +302,10 @@ src/bookings/
   entities/booking.entity.ts
   dto/create-booking.dto.ts, checkin.dto.ts
 
+src/reports/
+  reports.module.ts, reports.controller.ts
+  reports.service.ts  ← computeMetrics() (5 grouped queries, shared by both endpoints + the digest cron), sendDailyDigests() cron (23:55 daily)
+
 src/common/utils/gym-scope.ts  ← scopedGymIds() / assertGymAccess() — shared staff gym-scoping helpers
 
 src/main.ts   ← global ValidationPipe, setGlobalPrefix('api/v1'), rawBody:true (Stripe webhook)
@@ -318,7 +325,7 @@ seed.js       ← creates super_admin + org + gym + org_admin; run with node see
 - [x] ClassScheduleModule — RRULE templates, slot materialization + cron, occurrence-level edits, disable/enable with notifications, member browse
 - [x] BookingsModule — booking gates, waitlist + promotion, class QR check-in, gym-door entry QR, no-show, staff roster
 - [x] CommunicationModule + NotificationsModule — every member email paired with push (Firebase) + in-app inbox row, automated booking-reminder cron, staff announcement broadcast, device-token registration
-- [ ] ReportsModule — AiReport (daily, per gym, Gemini); OrgReport (monthly, all gyms)
+- [x] ReportsModule — live per-gym + org-rollup statistics endpoints, daily digest email to org_admin; no AI/LLM (deferred from spec)
 
 ## 8. Key Architectural Decisions
 
@@ -387,6 +394,12 @@ A 15-minute cron (`NotificationsService.sendBookingReminders`) finds confirmed b
 
 **Announcements reuse the same dispatcher as system events**
 `POST /communication/broadcast` (org_admin/gym_manager) targets every active member of a gym, or a picked subset via `member_ids`, and fans out through the exact same `notify()` call each system-triggered event uses — so a manual "gym closed for maintenance" announcement gets the identical email+push+inbox treatment as an automatic waitlist promotion.
+
+**Reports: live queries only, no stored snapshots, no AI**
+`ReportsModule` replaced the original `AiReport`/`OrgReport` entity stubs (Gemini-summarized daily/monthly reports, never implemented, deleted along with their `Gym`/`Organization` relations) with pure statistics — same "live query, not a stored record" precedent `VatService.orgRollup()` already set. `ReportsService.computeMetrics(gyms, start, end)` is the one aggregation function behind both `GET /reports/gyms/:gymId/stats` and `GET /reports/org/stats` (org rollup sums the per-gym numbers and **recomputes rates from the summed counts**, never averages per-gym rates) — 5 grouped SQL queries (`GROUP BY gym_id`, Postgres `FILTER (WHERE …)` for sub-breakdowns) regardless of how many gyms are asked for. Bookings/attendance/fill-rate are windowed on the **slot's** `starts_at` (classes that happened in the period), not booking `created_at`. Churn rate (`cancelled_in_period / (active_now + cancelled_in_period)`) is a documented approximation — there's no historical subscriber-count snapshot to divide against instead. `MemberSubscription` gained an `@UpdateDateColumn() updated_at` (previously absent) so "cancelled today" is queryable — a bare `sub.status = CANCELLED; save()` in `SubscriptionsService.cancel()` now bumps it for free.
+
+**Daily digest email bypasses NotificationsService on purpose**
+`ReportsService.sendDailyDigests()` (23:55 daily) emails every active org_admin an end-of-day summary. It calls `MailService.sendDailyDigest()` directly instead of going through `NotificationsService.notify()` — `notify()` is member-scoped (loads a `Member`, writes to the member-only `NotificationLog` inbox), and an org_admin is a `StaffUser` with no in-app inbox anywhere in this system. Same narrow "call MailService directly" exception `InvoicesService.resend()` already established, for a different reason (recipient isn't a member at all, not "must throw on failure").
 
 ## 9. JWT Payload Shapes
 

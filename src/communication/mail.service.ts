@@ -264,6 +264,74 @@ export class MailService {
     }
   }
 
+  // end-of-day statistics digest, sent to every org_admin (see ReportsService.sendDailyDigests)
+  async sendDailyDigest(
+    toEmail: string,
+    orgName: string,
+    currency: string,
+    reportDate: Date,
+    totals: {
+      revenue: { total: number; invoice_count: number };
+      bookings: { checked_in: number; no_show: number; confirmed: number };
+      members: { new_members: number; cancelled_subscriptions: number };
+    },
+    byGym: {
+      gym_name: string;
+      revenue: { total: number };
+      members: { new_members: number; cancelled_subscriptions: number };
+    }[],
+  ): Promise<void> {
+    const dateLabel = reportDate.toDateString();
+    const gymRows = byGym.length > 1
+      ? byGym
+          .map(
+            (g) => `
+          <tr>
+            <td style="padding:4px 16px 4px 0">${g.gym_name}</td>
+            <td style="padding:4px 16px 4px 0">${currency} ${g.revenue.total.toFixed(2)}</td>
+            <td style="padding:4px 16px 4px 0">${g.members.new_members}</td>
+            <td style="padding:4px 16px 4px 0">${g.members.cancelled_subscriptions}</td>
+          </tr>`,
+          )
+          .join('')
+      : '';
+    try {
+      await this.transporter.sendMail({
+        from: `"Gym SaaS" <${this.config.get('EMAIL_USER')}>`,
+        to: toEmail,
+        subject: `${orgName}: daily summary for ${dateLabel}`,
+        html: `
+          <h2>Today at ${orgName}</h2>
+          <p>${dateLabel}</p>
+          <table style="border-collapse:collapse">
+            <tr><td style="padding:4px 16px 4px 0">Revenue</td><td><strong>${currency} ${totals.revenue.total.toFixed(2)}</strong> (${totals.revenue.invoice_count} invoice${totals.revenue.invoice_count === 1 ? '' : 's'})</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Bookings confirmed</td><td>${totals.bookings.confirmed}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Checked in</td><td>${totals.bookings.checked_in}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">No-shows</td><td>${totals.bookings.no_show}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">New members</td><td>${totals.members.new_members}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Cancelled subscriptions</td><td>${totals.members.cancelled_subscriptions}</td></tr>
+          </table>
+          ${
+            gymRows
+              ? `
+          <h3>By branch</h3>
+          <table style="border-collapse:collapse">
+            <tr><th style="text-align:left;padding:4px 16px 4px 0">Gym</th><th style="text-align:left;padding:4px 16px 4px 0">Revenue</th><th style="text-align:left;padding:4px 16px 4px 0">New members</th><th style="text-align:left;padding:4px 16px 4px 0">Cancellations</th></tr>
+            ${gymRows}
+          </table>`
+              : ''
+          }
+          <p>See the admin dashboard for the full breakdown, including attendance and churn.</p>
+        `,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to send daily digest to ${toEmail}`, err);
+      throw new InternalServerErrorException(
+        'Failed to send daily digest email',
+      );
+    }
+  }
+
   async sendOtp(toEmail: string, name: string, otp: string, purpose: 'reset' | 'change'): Promise<void> {
     const subject = purpose === 'reset' ? 'Your password reset OTP' : 'Your password change OTP';
     const action  = purpose === 'reset' ? 'reset your password' : 'change your password';

@@ -6,7 +6,6 @@ import { Waiver } from 'src/members/entities/waiver.entity';
 import { Organization } from 'src/organization/entities/organization.entity';
 import { Discount } from 'src/plans/entities/discount.entity';
 import { MembershipPlan } from 'src/plans/entities/membership-plan.entity';
-import { AiReport } from 'src/reports/entities/ai-report.entity';
 import { SlotTemplate } from 'src/schedule/entities/slot-template.entity';
 import { Slot } from 'src/schedule/entities/slot.entity';
 import { StaffGymAccess } from 'src/staff/entities/staff-gym-access.entity';
@@ -94,9 +93,6 @@ export class Gym {
 
   @OneToMany(() => NotificationLog, (n) => n.gym)
   notification_logs!: NotificationLog[];
-
-  @OneToMany(() => AiReport, (r) => r.gym)
-  ai_reports!: AiReport[];
 
   @OneToMany(() => Waiver, (w) => w.gym)
   waivers!: Waiver[];

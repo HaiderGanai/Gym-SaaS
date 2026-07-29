@@ -5,7 +5,7 @@ import { Member } from 'src/members/entities/member.entity';
 import { Discount } from 'src/plans/entities/discount.entity';
 import { MembershipPlan } from 'src/plans/entities/membership-plan.entity';
 import {
-  Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
+  Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn,
   ManyToOne, OneToMany, JoinColumn,
 } from 'typeorm';
 
@@ -66,6 +66,11 @@ export class MemberSubscription {
 
   @CreateDateColumn()
   created_at!: Date;
+
+  // ReportsModule reads this to find "cancelled today" — bumps on every save,
+  // including the plain status flip in cancel()/pause()/resume()
+  @UpdateDateColumn()
+  updated_at!: Date;
 
   @OneToMany(() => Invoice, (i) => i.subscription)
   invoices!: Invoice[];
