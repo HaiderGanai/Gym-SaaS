@@ -16,7 +16,6 @@ import { scopedGymIds, assertGymAccess } from '../common/utils/gym-scope';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
-import { GenerateSlotsDto } from './dto/generate-slots.dto';
 import { CreateSlotDto } from './dto/create-slot.dto';
 import { UpdateSlotDto } from './dto/update-slot.dto';
 
@@ -92,15 +91,24 @@ export class ScheduleService {
     const rebuild =
       (dto.rrule && dto.rrule !== template.rrule) ||
       (dto.duration_minutes && dto.duration_minutes !== template.duration_minutes);
+    const wasActive = template.is_active;
 
-    const { apply_to_future, ...fields } = dto;
+    const { apply_to_future, generate_until, ...fields } = dto;
+    // dto fields left unset by the caller are still own properties (TS class-field
+    // semantics under target ES2022+) — Object.assign would otherwise blank them
+    for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+      if (fields[key] === undefined) delete fields[key];
+    }
     Object.assign(template, fields);
-    if (dto.rrule) expandRrule(dto.rrule, new Date(), this.resolveUntil()); // validate
+    // generate_until (optional) sets the materialization horizon — replaces POST :id/generate
+    const until = this.resolveUntil(generate_until);
+    if (dto.rrule) expandRrule(dto.rrule, new Date(), until); // validate
     const saved = await this.templateRepo.save(template);
+    if (generate_until && !wasActive) {
+      throw new ConflictException('Template is deactivated');
+    }
 
-    if (!apply_to_future) return { template: saved };
-
-    if (rebuild) {
+    if (apply_to_future && rebuild) {
       // timing changed: drop future empty slots, keep booked ones, regenerate
       const { affected } = await this.slotRepo.delete({
         template_id: id, booking_count: 0, starts_at: MoreThan(new Date()),
@@ -108,31 +116,42 @@ export class ScheduleService {
       const kept = await this.slotRepo.count({
         where: { template_id: id, starts_at: MoreThan(new Date()) },
       });
-      const result = await this.materialize(saved, new Date(), this.resolveUntil());
-      return { template: saved, slots_removed: affected ?? 0, booked_slots_kept: kept, ...result };
+      const result = await this.materialize(saved, new Date(), until);
+      return {
+        template: saved, slots_removed: affected ?? 0, booked_slots_kept: kept,
+        ...result, ...(await this.window(id)),
+      };
     }
 
-    // non-timing edits: push onto future slots; never shrink capacity below bookings
-    const future = await this.slotRepo.find({
-      where: { template_id: id, starts_at: MoreThan(new Date()) },
-    });
-    const toSave: Slot[] = [];
-    let capacity_conflicts = 0;
-    for (const slot of future) {
-      if (dto.capacity !== undefined && dto.capacity < slot.booking_count) {
-        capacity_conflicts++;
-        continue;
+    let pushed = {};
+    if (apply_to_future) {
+      // non-timing edits: push onto future slots; never shrink capacity below bookings
+      const future = await this.slotRepo.find({
+        where: { template_id: id, starts_at: MoreThan(new Date()) },
+      });
+      const toSave: Slot[] = [];
+      let capacity_conflicts = 0;
+      for (const slot of future) {
+        if (dto.capacity !== undefined && dto.capacity < slot.booking_count) {
+          capacity_conflicts++;
+          continue;
+        }
+        if (dto.capacity !== undefined) slot.capacity = dto.capacity;
+        if (dto.instructor_id) slot.instructor_id = dto.instructor_id;
+        if (dto.activity_name) slot.activity_name = dto.activity_name;
+        if (dto.location !== undefined) slot.location = dto.location;
+        if (dto.booking_window_hours !== undefined) slot.booking_window_hours = dto.booking_window_hours;
+        if (dto.cancellation_cutoff_hours !== undefined) slot.cancellation_cutoff_hours = dto.cancellation_cutoff_hours;
+        toSave.push(slot);
       }
-      if (dto.capacity !== undefined) slot.capacity = dto.capacity;
-      if (dto.instructor_id) slot.instructor_id = dto.instructor_id;
-      if (dto.activity_name) slot.activity_name = dto.activity_name;
-      if (dto.location !== undefined) slot.location = dto.location;
-      if (dto.booking_window_hours !== undefined) slot.booking_window_hours = dto.booking_window_hours;
-      if (dto.cancellation_cutoff_hours !== undefined) slot.cancellation_cutoff_hours = dto.cancellation_cutoff_hours;
-      toSave.push(slot);
+      await this.slotRepo.save(toSave);
+      pushed = { slots_updated: toSave.length, capacity_conflicts };
     }
-    await this.slotRepo.save(toSave);
-    return { template: saved, slots_updated: toSave.length, capacity_conflicts };
+
+    if (!generate_until) return { template: saved, ...pushed };
+    // extend the materialized window (idempotent — existing occurrences are skipped)
+    const result = await this.materialize(saved, new Date(), until);
+    return { template: saved, ...pushed, ...result, ...(await this.window(id)) };
   }
 
   // DELETE = deactivate (soft) + clear future empty slots; booked slots survive
@@ -151,13 +170,6 @@ export class ScheduleService {
       slots_removed: affected ?? 0,
       booked_slots_kept: kept,
     };
-  }
-
-  async generateForTemplate(id: string, dto: GenerateSlotsDto, user: StaffJwtPayload) {
-    const template = await this.findOneTemplate(id, user);
-    if (!template.is_active) throw new ConflictException('Template is deactivated');
-    const result = await this.materialize(template, new Date(), this.resolveUntil(dto.until));
-    return { ...result, ...(await this.window(id)) };
   }
 
   // ── Slots ────────────────────────────────────────────────────────────────

@@ -78,7 +78,7 @@ Recurrence is stored as a standard RFC 5545 string (expanded with the `rrule` np
 
 - Creating a template immediately generates slots for the next **30 days** (override with `generate_until`, max 366 days ahead).
 - A daily **2:00 AM cron** (`horizonCron`) tops up every active template so the rolling 30-day window stays filled.
-- `POST /schedule/templates/:id/generate` extends the window manually (e.g. open bookings 3 months out).
+- `PATCH /schedule/templates/:id` with a `generate_until` field extends the window manually (e.g. open bookings 3 months out) — same endpoint as every other template edit, no separate route.
 
 Generation is **idempotent** — an occurrence whose `starts_at` already exists for the template is skipped, so re-running never duplicates. It also **skips instructor conflicts**: if the instructor already has an enabled slot overlapping an occurrence, that occurrence is not created (reported as `skipped_conflicts`).
 
@@ -89,13 +89,13 @@ DTSTART:20260720T090000Z
 RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR
 ```
 
-### What `POST /schedule/templates/:id/generate` actually does (and why the template "doesn't change")
+### What `generate_until` on `PATCH /schedule/templates/:id` actually does
 
-This endpoint **never modifies the template row**. Looking at the template after calling it will always show zero difference — that's expected, not a bug. What it does is create **Slot rows**: it expands the template's rrule from *now* until the `until` date you send, and inserts a slot for every occurrence that doesn't already exist.
+Sending `generate_until` **doesn't change the recurrence rule or any other template field** by itself — pair it with other fields in the same PATCH if you want both. What it does is create **Slot rows**: it expands the template's rrule from *now* until the date you send, and inserts a slot for every occurrence that doesn't already exist. This used to be a separate `POST /schedule/templates/:id/generate` endpoint — it's now folded into the one PATCH every other template edit already uses, so admins/managers have a single place to both edit the template and push its materialized window out.
 
 ```
-POST /schedule/templates/:id/generate
-{ "until": "2026-10-15" }        ← extend the bookable window out to this date
+PATCH /schedule/templates/:id
+{ "generate_until": "2026-10-15" }        ← extend the bookable window out to this date
 ```
 
 The response tells you exactly what happened:
@@ -108,20 +108,20 @@ The response tells you exactly what happened:
 
 Three common "nothing happened" cases:
 
-1. **`until` is within the already-materialized window.** Template creation + the nightly cron already keep 30 days materialized. If you send `until` ≤ ~30 days out, every occurrence already exists → `created: 0, skipped_existing: N`. To see new rows, send an `until` **beyond** the current window (up to 366 days ahead).
-2. **You looked at the template, not the slots.** Verify with `GET /schedule/slots?template_id=<id>&from=<today>&to=<until>` — the new occurrences are there.
+1. **`generate_until` is within the already-materialized window.** Template creation + the nightly cron already keep 30 days materialized. If you send a date ≤ ~30 days out, every occurrence already exists → `created: 0, skipped_existing: N`. To see new rows, send a date **beyond** the current window (up to 366 days ahead).
+2. **You looked at the template, not the slots.** Verify with `GET /schedule/slots?template_id=<id>&from=<today>&to=<generate_until>` — the new occurrences are there.
 3. **The rrule simply has no occurrences in that range** (e.g. `UNTIL`/`COUNT` inside the rrule already ended) → `created: 0` legitimately.
 
-There is deliberately no `generated_until` **column** on the template — the materialized window *is* the slot rows. Instead, every template response computes it live: `GET /schedule/templates`, `GET /schedule/templates/:id`, template create, and `/generate` all include
+There is deliberately no `generated_until` **column** on the template — the materialized window *is* the slot rows. Instead, every template response computes it live: `GET /schedule/templates`, `GET /schedule/templates/:id`, template create, and any PATCH all include
 
 | Computed field | Meaning |
 |---|---|
 | `generated_until` | `starts_at` of the latest materialized slot — how far out the schedule currently extends (`null` if no slots). |
 | `future_slots` | Number of upcoming slots from this template. |
 
-So the frontend renders "bookable until 12 Oct" straight off the template payload, and after a `/generate` call the response itself shows the window moving.
+So the frontend renders "bookable until 12 Oct" straight off the template payload, and after a `generate_until` PATCH the response itself shows the window moving.
 
-**`/generate` is add-only — it never shrinks the window.** Every call expands the rrule from *now* to your `until`, inserts what's missing (`created`), and reports what already existed in that range (`skipped_existing`). Sending an *earlier* `until` than the current `generated_until` is therefore a no-op: `created: 0`, nothing deleted, `generated_until` unchanged. This is deliberate — slots beyond a shortened window may already carry bookings, so shrinking is an explicit act: delete individual empty slots (`DELETE /schedule/slots/:id`, 409 if booked), disable them, or deactivate the whole template (which bulk-removes all future *empty* slots). Note the nightly cron always re-fills the next 30 days for active templates, so you can never shrink below that horizon. `future_slots` counts every remaining upcoming slot, so it grows as you extend and shrinks by itself as sessions pass into history.
+**`generate_until` is add-only — it never shrinks the window.** Every call expands the rrule from *now* to your date, inserts what's missing (`created`), and reports what already existed in that range (`skipped_existing`). Sending an earlier date than the current `generated_until` is therefore a no-op: `created: 0`, nothing deleted, `generated_until` unchanged. This is deliberate — slots beyond a shortened window may already carry bookings, so shrinking is an explicit act: delete individual empty slots (`DELETE /schedule/slots/:id`, 409 if booked), disable them, or deactivate the whole template (which bulk-removes all future *empty* slots). Note the nightly cron always re-fills the next 30 days for active templates, so you can never shrink below that horizon. `future_slots` counts every remaining upcoming slot, so it grows as you extend and shrinks by itself as sessions pass into history. A `generate_until` PATCH on a deactivated template 409s ("Template is deactivated") — reactivate (`is_active: true`) first.
 
 ## RRULE anatomy — what the frontend needs to build
 

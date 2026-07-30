@@ -5,7 +5,6 @@ import {
 import { ScheduleService } from './schedule.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
-import { GenerateSlotsDto } from './dto/generate-slots.dto';
 import { CreateSlotDto } from './dto/create-slot.dto';
 import { UpdateSlotDto } from './dto/update-slot.dto';
 import { SlotStatus } from './entities/slot.entity';
@@ -64,17 +63,6 @@ export class ScheduleController {
   @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER)
   deactivateTemplate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: StaffJwtPayload) {
     return this.scheduleService.deactivateTemplate(id, user);
-  }
-
-  @Post('templates/:id/generate')
-  @UseGuards(StaffJwtGuard, RolesGuard)
-  @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER)
-  generateSlots(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: GenerateSlotsDto,
-    @CurrentUser() user: StaffJwtPayload,
-  ) {
-    return this.scheduleService.generateForTemplate(id, dto, user);
   }
 
   // ── Slots ────────────────────────────────────────────────────────────────

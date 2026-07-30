@@ -77,11 +77,18 @@ Changing the timing (`rrule` / `duration_minutes`) with `apply_to_future: true` 
 → `{ "template": {...}, "slots_removed": 10, "booked_slots_kept": 2, "created": 12, ... }`
 
 ### Extend the generated window
-**POST** `/schedule/templates/{{template_id}}/generate`
+There is no separate `/generate` endpoint — send `generate_until` on the same **PATCH** used for every other template edit:
+
+**PATCH** `/schedule/templates/{{template_id}}` — `Bearer {{admin_token}}`
 ```json
-{ "until": "2026-10-01" }
+{ "generate_until": "2026-10-01" }
 ```
-→ `{ "created": 27, "skipped_existing": 13, "skipped_conflicts": 0, "generated_until": "2026-10-12T09:00:00.000Z", "future_slots": 40 }` — idempotent, safe to re-run.
+→ `{ "template": {...}, "created": 27, "skipped_existing": 13, "skipped_conflicts": 0, "generated_until": "2026-10-12T09:00:00.000Z", "future_slots": 40 }` — idempotent, safe to re-run.
+
+Combine it with other fields in one call if needed — e.g. bump capacity **and** extend the window together:
+```json
+{ "capacity": 15, "apply_to_future": true, "generate_until": "2026-10-01" }
+```
 
 `generated_until` = latest materialized occurrence (how far out the schedule currently extends); `future_slots` = upcoming slot count. Both computed fields are also on every template in `GET /schedule/templates` and `GET /schedule/templates/:id`, so the frontend always knows the current window without querying slots.
 

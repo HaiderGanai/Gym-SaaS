@@ -1,5 +1,5 @@
 import {
-  IsUUID, IsString, IsNotEmpty, IsOptional, IsInt, Min, IsBoolean,
+  IsUUID, IsString, IsNotEmpty, IsOptional, IsInt, Min, IsBoolean, IsDateString,
 } from 'class-validator';
 
 export class UpdateTemplateDto {
@@ -50,4 +50,9 @@ export class UpdateTemplateDto {
   @IsOptional()
   @IsBoolean()
   apply_to_future?: boolean;
+
+  // extend/set how far ahead slots are materialized (replaces POST :id/generate)
+  @IsOptional()
+  @IsDateString()
+  generate_until?: string;
 }
