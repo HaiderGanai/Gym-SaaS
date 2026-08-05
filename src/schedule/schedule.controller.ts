@@ -83,9 +83,10 @@ export class ScheduleController {
     @Query('to') to?: string,
     @Query('status') status?: SlotStatus,
     @Query('template_id') templateId?: string,
+    @Query('month') month?: string,
   ) {
     return this.scheduleService.findSlots(user, {
-      gym_id: gymId, from, to, status, template_id: templateId,
+      gym_id: gymId, from, to, status, template_id: templateId, month,
     });
   }
 

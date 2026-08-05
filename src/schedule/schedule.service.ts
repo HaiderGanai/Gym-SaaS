@@ -186,12 +186,17 @@ export class ScheduleService {
 
   async findSlots(
     user: StaffJwtPayload,
-    filters: { gym_id?: string; from?: string; to?: string; status?: SlotStatus; template_id?: string },
+    filters: { gym_id?: string; from?: string; to?: string; status?: SlotStatus; template_id?: string; month?: string },
   ) {
     const ids = await this.gymFilter(user, filters.gym_id);
-    // default window: today onwards, one horizon ahead — the calendar view
-    const from = filters.from ? new Date(filters.from) : this.startOfToday();
-    const to = filters.to ? new Date(filters.to) : this.addDays(from, HORIZON_DAYS);
+    let from: Date, to: Date;
+    if (filters.month) {
+      [from, to] = this.monthRange(filters.month);
+    } else {
+      // default window: today onwards, one horizon ahead — the calendar view
+      from = filters.from ? new Date(filters.from) : this.startOfToday();
+      to = filters.to ? new Date(filters.to) : this.addDays(from, HORIZON_DAYS);
+    }
     return this.slotRepo.find({
       where: {
         ...(ids ? { gym_id: In(ids) } : {}),
@@ -465,5 +470,16 @@ export class ScheduleService {
 
   private addDays(date: Date, days: number): Date {
     return new Date(date.getTime() + days * 86_400_000);
+  }
+
+  // 'YYYY-MM' -> [first instant of that month, first instant of the next month)
+  private monthRange(month: string): [Date, Date] {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException('month must be in YYYY-MM format');
+    }
+    const [year, mon] = month.split('-').map(Number);
+    const from = new Date(year, mon - 1, 1);
+    const to = new Date(year, mon, 1);
+    return [from, to];
   }
 }
