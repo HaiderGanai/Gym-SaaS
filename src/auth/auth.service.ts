@@ -73,7 +73,11 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id, gym_ids) };
+    return {
+      access_token: this.jwtService.sign(payload),
+      member_id: member.id,
+      organization: await this.orgBrandingByGym(primary_gym_id, gym_ids),
+    };
   }
 
   async acceptStaffInvite(dto: AcceptInviteDto) {
@@ -90,7 +94,11 @@ export class AuthService {
     const member = await this.membersService.acceptMemberInvite(dto);
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);
     const payload: MemberJwtPayload = { sub: member.id, email: member.email, gym_ids, primary_gym_id, status: member.status };
-    return { access_token: this.jwtService.sign(payload), organization: await this.orgBrandingByGym(primary_gym_id, gym_ids) };
+    return {
+      access_token: this.jwtService.sign(payload),
+      member_id: member.id,
+      organization: await this.orgBrandingByGym(primary_gym_id, gym_ids),
+    };
   }
 
   // ── Org branding at login ────────────────────────────────────────────────────
