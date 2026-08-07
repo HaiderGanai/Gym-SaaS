@@ -17,6 +17,7 @@ import { CommunicationModule } from './communication/communication.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReportsModule } from './reports/reports.module';
 import { PlatformBillingModule } from './platform-billing/platform-billing.module';
+import { HelpModule } from './help/help.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -54,6 +55,7 @@ import { AppService } from './app.service';
     NotificationsModule,
     ReportsModule,
     PlatformBillingModule,
+    HelpModule,
   ],
   controllers: [AppController],
   providers: [AppService],
