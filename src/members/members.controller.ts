@@ -1,4 +1,8 @@
-import { Controller, Get, Post, Patch, Body, Param, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller, Get, Post, Patch, Body, Param, UseGuards, Req,
+  UseInterceptors, UploadedFile, BadRequestException,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import { MembersService } from './members.service';
 import { RegisterMemberDto } from './dto/register-member.dto';
@@ -55,10 +59,10 @@ export class MembersController {
     return this.membersService.findAll(user);
   }
 
-  // GET /members/me — must come before GET /members/:id
+  // GET /members/profile — must come before GET /members/:id
   @UseGuards(MemberJwtGuard)
-  @Get('me')
-  getMe(@CurrentUser() member: MemberJwtPayload) {
+  @Get('profile')
+  getProfile(@CurrentUser() member: MemberJwtPayload) {
     return this.membersService.getMe(member.sub);
   }
 
@@ -73,13 +77,23 @@ export class MembersController {
 
   // ── Member self-management ──────────────────────────────────────────────────
 
+  // accepts JSON, or multipart/form-data with an optional 'photo' image file
+  // (uploaded to Cloudinary → photo_url)
   @UseGuards(MemberJwtGuard)
   @Patch('me')
+  @UseInterceptors(FileInterceptor('photo', {
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) =>
+      file.mimetype.startsWith('image/')
+        ? cb(null, true)
+        : cb(new BadRequestException('photo must be an image file'), false),
+  }))
   updateProfile(
     @Body() dto: UpdateMemberDto,
     @CurrentUser() member: MemberJwtPayload,
+    @UploadedFile() photo?: Express.Multer.File,
   ) {
-    return this.membersService.updateProfile(member.sub, dto);
+    return this.membersService.updateProfile(member.sub, dto, photo);
   }
 
   @UseGuards(StaffJwtGuard, RolesGuard)

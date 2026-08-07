@@ -4,9 +4,13 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import { v2 as cloudinary } from 'cloudinary';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -38,6 +42,8 @@ const MEMBER_SAFE_SELECT = {
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     @InjectRepository(Member)
     private memberRepo: Repository<Member>,
@@ -48,7 +54,14 @@ export class MembersService {
     @InjectRepository(Gym)
     private gymRepo: Repository<Gym>,
     private mailService: MailService,
-  ) {}
+    config: ConfigService,
+  ) {
+    cloudinary.config({
+      cloud_name: config.get<string>('CLOUDINARY_NAME'),
+      api_key: config.get<string>('CLOUDINARY_API_KEY'),
+      api_secret: config.get<string>('CLOUDINARY_API_SECRET'),
+    });
+  }
 
   // ── Existing helpers used by AuthService ────────────────────────────────────
 
@@ -290,17 +303,31 @@ export class MembersService {
     return { ...member, gym_access: gymAccess };
   }
 
-  async updateProfile(memberId: string, dto: UpdateMemberDto) {
+  async updateProfile(memberId: string, dto: UpdateMemberDto, photo?: Express.Multer.File) {
     const member = await this.memberRepo.findOne({ where: { id: memberId } });
     if (!member) throw new NotFoundException('Member not found');
 
     if (dto.full_name !== undefined) member.full_name = dto.full_name;
     if (dto.phone !== undefined) member.phone = dto.phone;
     if (dto.photo_url !== undefined) member.photo_url = dto.photo_url;
+    if (photo) member.photo_url = await this.uploadPhoto(photo);
 
     const saved = await this.memberRepo.save(member);
     const { password_hash, reset_token, reset_token_expires_at, invite_token, invite_expires_at, fcm_token, ...safe } = saved as any;
     return safe;
+  }
+
+  private async uploadPhoto(file: Express.Multer.File): Promise<string> {
+    try {
+      const result = await cloudinary.uploader.upload(
+        `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+        { folder: 'gym-saas/member-photos' },
+      );
+      return result.secure_url;
+    } catch (err) {
+      this.logger.error('Cloudinary photo upload failed', err);
+      throw new InternalServerErrorException('Photo upload failed');
+    }
   }
 
   async updateStatus(memberId: string, dto: UpdateMemberStatusDto, user: StaffJwtPayload) {
