@@ -58,6 +58,11 @@ export class MemberSubscription {
   @Column({ type: 'date' })
   current_period_end!: Date;
 
+  // set on pause, cleared on resume — resume() reads this to shift
+  // current_period_end forward by the days spent paused
+  @Column({ type: 'timestamp', nullable: true })
+  paused_at!: Date | null;
+
   @Column({ nullable: true })
   stripe_subscription_id!: string;
 

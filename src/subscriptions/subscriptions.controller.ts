@@ -25,6 +25,18 @@ export class SubscriptionsController {
     return this.subsService.findMine(user.sub);
   }
 
+  @Patch('me/:id/pause')
+  @UseGuards(MemberJwtGuard)
+  pauseMine(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: MemberJwtPayload) {
+    return this.subsService.pauseMine(id, user.sub);
+  }
+
+  @Patch('me/:id/resume')
+  @UseGuards(MemberJwtGuard)
+  resumeMine(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: MemberJwtPayload) {
+    return this.subsService.resumeMine(id, user.sub);
+  }
+
   @Post()
   @UseGuards(StaffJwtGuard, RolesGuard)
   @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER, StaffRole.FRONT_DESK)

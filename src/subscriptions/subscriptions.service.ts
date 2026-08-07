@@ -176,19 +176,54 @@ export class SubscriptionsService {
 
   async pause(id: string, user: StaffJwtPayload) {
     const sub = await this.findOne(id, user);
-    if (sub.status !== SubscriptionStatus.ACTIVE) {
-      throw new BadRequestException(`Only active subscriptions can be paused (current: ${sub.status})`);
-    }
-    sub.status = SubscriptionStatus.PAUSED;
-    return this.subRepo.save(sub);
+    return this.applyPause(sub);
   }
 
   async resume(id: string, user: StaffJwtPayload) {
     const sub = await this.findOne(id, user);
+    return this.applyResume(sub);
+  }
+
+  // ── Member self-service (mirrors staff pause/resume, ownership-checked) ──
+
+  async pauseMine(id: string, memberId: string) {
+    const sub = await this.findOwnedByMember(id, memberId);
+    return this.applyPause(sub);
+  }
+
+  async resumeMine(id: string, memberId: string) {
+    const sub = await this.findOwnedByMember(id, memberId);
+    return this.applyResume(sub);
+  }
+
+  private async findOwnedByMember(id: string, memberId: string): Promise<MemberSubscription> {
+    const sub = await this.subRepo.findOne({ where: { id }, relations: { plan: true } });
+    if (!sub || sub.member_id !== memberId) throw new NotFoundException('Subscription not found');
+    return sub;
+  }
+
+  private applyPause(sub: MemberSubscription) {
+    if (sub.status !== SubscriptionStatus.ACTIVE) {
+      throw new BadRequestException(`Only active subscriptions can be paused (current: ${sub.status})`);
+    }
+    sub.status = SubscriptionStatus.PAUSED;
+    sub.paused_at = new Date();
+    return this.subRepo.save(sub);
+  }
+
+  // shifts current_period_end forward by whole days spent paused — no
+  // benefits (booking, entry QR) are granted while paused since every gate
+  // checks status === active, not just an unexpired period
+  private applyResume(sub: MemberSubscription) {
     if (sub.status !== SubscriptionStatus.PAUSED) {
       throw new BadRequestException(`Only paused subscriptions can be resumed (current: ${sub.status})`);
     }
+    const pausedDays = Math.round((Date.now() - new Date(sub.paused_at!).getTime()) / 86_400_000);
+    const newEnd = new Date(sub.current_period_end);
+    newEnd.setDate(newEnd.getDate() + pausedDays);
+    sub.current_period_end = newEnd;
     sub.status = SubscriptionStatus.ACTIVE;
+    sub.paused_at = null;
     return this.subRepo.save(sub);
   }
 
