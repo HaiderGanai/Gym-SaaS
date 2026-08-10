@@ -5,6 +5,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Not, MoreThan } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
+import * as QRCode from 'qrcode';
 import { Booking, BookingStatus } from './entities/booking.entity';
 import { Slot, SlotStatus } from '../schedule/entities/slot.entity';
 import { MemberSubscription, SubscriptionStatus } from '../subscriptions/entities/member-subscription.entity';
@@ -86,7 +87,8 @@ export class BookingsService {
       }));
       booking.qr_token = this.bookingQr(booking, slot);
       booking = await this.bookingRepo.save(booking);
-      return { message: 'Booking confirmed', booking: { ...booking, slot } };
+      const qr_image = await QRCode.toDataURL(booking.qr_token);
+      return { message: 'Booking confirmed', booking: { ...booking, slot, qr_image } };
     }
 
     // class full → waitlist (no QR until promoted)
@@ -108,7 +110,7 @@ export class BookingsService {
   // ── Member: my bookings ──────────────────────────────────────────────────
 
   async myBookings(user: MemberJwtPayload, includePast = false) {
-    return this.bookingRepo.find({
+    const bookings = await this.bookingRepo.find({
       where: {
         member_id: user.sub,
         ...(includePast ? {} : {
@@ -119,6 +121,10 @@ export class BookingsService {
       relations: { slot: true },
       order: { slot: { starts_at: 'ASC' } },
     });
+    return Promise.all(bookings.map(async (booking) => ({
+      ...booking,
+      qr_image: booking.qr_token ? await QRCode.toDataURL(booking.qr_token) : null,
+    })));
   }
 
   // ── Cancel (member respects the cutoff, staff does not) ─────────────────
@@ -257,11 +263,13 @@ export class BookingsService {
     }
     const validUntil = this.dayEnd(sub.current_period_end);
     const expiresIn = Math.max(60, Math.floor((validUntil.getTime() - Date.now()) / 1000));
+    const qr_token = this.jwtService.sign(
+      { typ: 'entry', member_id: user.sub, gym_id: gym },
+      { expiresIn },
+    );
     return {
-      qr_token: this.jwtService.sign(
-        { typ: 'entry', member_id: user.sub, gym_id: gym },
-        { expiresIn },
-      ),
+      qr_token,
+      qr_image: await QRCode.toDataURL(qr_token),
       gym_id: gym,
       valid_until: validUntil,
     };
