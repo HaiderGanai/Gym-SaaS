@@ -834,7 +834,7 @@ Also owns the printable per-gym desk entry QR and gym-attendance tracking (`Atte
 
 - [ ] **Step 4: Add a new Key Architectural Decisions entry to `CLAUDE.md`**
 
-Add this new bullet at the end of section 8 (Key Architectural Decisions), after the "Help & Legal content is hardcoded, not stored" entry:
+Add this new bullet at the end of section 8 (Key Architectural Decisions) — after whichever entry is currently last in that section (verify by reading the file first; do not assume a specific title, since the exact last entry can vary):
 
 ```markdown
 **Attendance is derived from gym entry, not from subscription state**
