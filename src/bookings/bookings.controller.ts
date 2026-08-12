@@ -8,7 +8,10 @@ import { CheckinDto } from './dto/checkin.dto';
 import { BookingStatus } from './entities/booking.entity';
 import { StaffJwtGuard } from '../auth/guards/staff-jwt.guard';
 import { MemberJwtGuard } from '../auth/guards/member-jwt.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { StaffRole } from '../staff/entities/staff-user.entity';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
 @Controller('bookings')
@@ -89,5 +92,18 @@ export class EntryQrController {
   @UseGuards(MemberJwtGuard)
   entryQr(@CurrentUser() user: MemberJwtPayload, @Query('gym_id') gymId?: string) {
     return this.bookingsService.entryQr(user, gymId);
+  }
+}
+
+// staff-facing: fetch the gym's printable static entry QR
+@Controller('gyms')
+export class GymQrController {
+  constructor(private bookingsService: BookingsService) {}
+
+  @Get(':id/qr')
+  @UseGuards(StaffJwtGuard, RolesGuard)
+  @Roles(StaffRole.ORG_ADMIN, StaffRole.GYM_MANAGER)
+  gymQr(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: StaffJwtPayload) {
+    return this.bookingsService.gymQr(id, user);
   }
 }

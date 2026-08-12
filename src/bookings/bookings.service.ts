@@ -393,7 +393,23 @@ export class BookingsService {
     );
   }
 
-  private verifyQr(token: string, typ: 'entry' | 'booking'): Record<string, any> | null {
+  // ── Staff: printable desk QR ──────────────────────────────────────────────
+  // one static, effectively-permanent QR per gym — printed once and left on
+  // the desk. The token alone grants nothing: every scan of it still runs
+  // activeSubscription() live, so a photographed/leaked poster can't bypass
+  // membership status.
+  async gymQr(gymId: string, user: StaffJwtPayload) {
+    const gym = await assertGymAccess(gymId, user, this.gymRepo);
+    const qr_token = this.jwtService.sign({ typ: 'gym', gym_id: gym.id }, { expiresIn: '3650d' });
+    return {
+      gym_id: gym.id,
+      gym_name: gym.name,
+      qr_token,
+      qr_image: await QRCode.toDataURL(qr_token),
+    };
+  }
+
+  private verifyQr(token: string, typ: 'entry' | 'booking' | 'gym'): Record<string, any> | null {
     try {
       const payload = this.jwtService.verify<Record<string, any>>(token);
       return payload.typ === typ ? payload : null;
