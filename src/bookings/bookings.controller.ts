@@ -81,6 +81,12 @@ export class CheckinController {
   booking(@Body() dto: CheckinDto, @CurrentUser() user: StaffJwtPayload) {
     return this.bookingsService.checkinBooking(dto.qr_token, user);
   }
+
+  @Post('gym-scan')
+  @UseGuards(MemberJwtGuard)
+  gymScan(@Body() dto: CheckinDto, @CurrentUser() user: MemberJwtPayload) {
+    return this.bookingsService.checkinGymScan(dto.qr_token, user);
+  }
 }
 
 // lives here (not MembersModule) because it is subscription+QR logic

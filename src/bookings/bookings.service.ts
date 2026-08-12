@@ -12,6 +12,7 @@ import { MemberSubscription, SubscriptionStatus } from '../subscriptions/entitie
 import { PlanType } from '../plans/entities/membership-plan.entity';
 import { Member, MemberStatus } from '../members/entities/member.entity';
 import { Gym } from '../gym/entities/gym.entity';
+import { Attendance } from './entities/attendance.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { scopedGymIds, assertGymAccess } from '../common/utils/gym-scope';
 import type { StaffJwtPayload, MemberJwtPayload } from '../common/interfaces/jwt-payload.interface';
@@ -25,6 +26,7 @@ export class BookingsService {
     @InjectRepository(MemberSubscription) private subRepo: Repository<MemberSubscription>,
     @InjectRepository(Member) private memberRepo: Repository<Member>,
     @InjectRepository(Gym) private gymRepo: Repository<Gym>,
+    @InjectRepository(Attendance) private attendanceRepo: Repository<Attendance>,
     private jwtService: JwtService,
     private notificationsService: NotificationsService,
   ) {}
@@ -275,6 +277,40 @@ export class BookingsService {
     };
   }
 
+  // ── Member: scans the gym's static desk QR themselves ───────────────────
+
+  async checkinGymScan(token: string, user: MemberJwtPayload) {
+    const payload = this.verifyQr(token, 'gym');
+    if (!payload) return { allowed: false, reason: 'Invalid QR code' };
+    const gymId = payload.gym_id;
+    if (!user.gym_ids.includes(gymId)) return { allowed: false, reason: 'Access denied' };
+
+    const gym = await this.gymRepo.findOne({ where: { id: gymId }, select: { id: true, name: true } });
+    if (!gym) return { allowed: false, reason: 'Gym not found' };
+
+    const sub = await this.activeSubscription(user.sub, gymId);
+    if (!sub) {
+      const latest = await this.subRepo.findOne({
+        where: { member_id: user.sub, gym_id: gymId },
+        order: { created_at: 'DESC' },
+      });
+      const reason = !latest
+        ? 'No subscription at this gym'
+        : latest.status === SubscriptionStatus.ACTIVE
+          ? `Subscription period ended ${latest.current_period_end}`
+          : `Subscription is ${latest.status}`;
+      return { allowed: false, reason };
+    }
+
+    const justMarked = await this.markAttendanceOnce(user.sub, gymId);
+    return {
+      allowed: true,
+      gym: { id: gym.id, name: gym.name },
+      subscription: { status: sub.status, plan: sub.plan.name, period_end: sub.current_period_end },
+      already_checked_in_today: !justMarked,
+    };
+  }
+
   // ── Staff: scan endpoints (200 + allowed flag — scanner-friendly) ────────
 
   async checkinEntry(token: string, user: StaffJwtPayload) {
@@ -301,6 +337,7 @@ export class BookingsService {
           : `Subscription is ${latest.status}`;
       return { allowed: false, reason, member };
     }
+    await this.markAttendanceOnce(payload.member_id, payload.gym_id);
     return {
       allowed: true,
       member,
@@ -416,6 +453,32 @@ export class BookingsService {
     } catch {
       return null;
     }
+  }
+
+  // one atomic upsert-or-skip — this is what makes "attendance marks once
+  // per day" race-safe without a SELECT-then-INSERT check. Returns true only
+  // when this call was the row that got inserted.
+  private async markAttendanceOnce(memberId: string, gymId: string): Promise<boolean> {
+    const today = new Date().toISOString().slice(0, 10);
+    // Raw SQL insert with ON CONFLICT DO NOTHING to detect if row was inserted
+    // and RETURNING to get the inserted row back if it was inserted
+    const result = await this.attendanceRepo.query(
+      `INSERT INTO attendances (id, member_id, gym_id, date, checked_in_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (member_id, gym_id, date) DO NOTHING
+       RETURNING id`,
+      [
+        require('uuid').v4(),
+        memberId,
+        gymId,
+        today,
+        new Date(),
+        new Date(),
+      ],
+    );
+    // if RETURNING clause matched a row, it was inserted (result has 1 element)
+    // if it was ignored, RETURNING is empty (result has 0 elements)
+    return result.length > 0;
   }
 
   // 'date' columns come back as YYYY-MM-DD strings — normalize either shape
