@@ -9,6 +9,7 @@ import { MemberSubscription } from '../../subscriptions/entities/member-subscrip
 import { Booking } from '../../bookings/entities/booking.entity';
 import { Invoice } from '../../invoices/entities/invoice.entity';
 import { NotificationLog } from '../../communication/entities/notification-log.entity';
+import { Attendance } from '../../bookings/entities/attendance.entity';
 
 export enum MemberStatus {
   ACTIVE    = 'active',
@@ -79,6 +80,9 @@ export class Member {
 
   @OneToMany(() => Booking, (b) => b.member)
   bookings!: Booking[];
+
+  @OneToMany(() => Attendance, (a) => a.member)
+  attendances!: Attendance[];
 
   @OneToMany(() => Invoice, (i) => i.member)
   invoices!: Invoice[];
