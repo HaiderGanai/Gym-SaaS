@@ -281,7 +281,7 @@ export class BookingsService {
 
   async checkinGymScan(token: string, user: MemberJwtPayload) {
     const payload = this.verifyQr(token, 'gym');
-    if (!payload) return { allowed: false, reason: 'Invalid QR code' };
+    if (!payload) return { allowed: false, reason: 'Invalid or expired code' };
     const gymId = payload.gym_id;
     if (!user.gym_ids.includes(gymId)) return { allowed: false, reason: 'Access denied' };
 
@@ -461,14 +461,14 @@ export class BookingsService {
   private async markAttendanceOnce(memberId: string, gymId: string): Promise<boolean> {
     const today = new Date().toISOString().slice(0, 10);
     // Raw SQL insert with ON CONFLICT DO NOTHING to detect if row was inserted
-    // and RETURNING to get the inserted row back if it was inserted
+    // and RETURNING to get the inserted row back if it was inserted.
+    // 'id' is omitted — Postgres auto-generates via @PrimaryGeneratedColumn('uuid')
     const result = await this.attendanceRepo.query(
-      `INSERT INTO attendances (id, member_id, gym_id, date, checked_in_at, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO attendances (member_id, gym_id, date, checked_in_at, created_at)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (member_id, gym_id, date) DO NOTHING
        RETURNING id`,
       [
-        require('uuid').v4(),
         memberId,
         gymId,
         today,
