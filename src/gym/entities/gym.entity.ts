@@ -11,6 +11,7 @@ import { Slot } from 'src/schedule/entities/slot.entity';
 import { StaffGymAccess } from 'src/staff/entities/staff-gym-access.entity';
 import { MemberSubscription } from 'src/subscriptions/entities/member-subscription.entity';
 import { VatPeriodSummary } from 'src/vat/entities/vat-period-summary.entity';
+import { Attendance } from 'src/bookings/entities/attendance.entity';
 import {
   Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
   ManyToOne, OneToMany, JoinColumn,
@@ -107,4 +108,7 @@ export class Gym {
 
   @OneToMany(() => Waiver, (w) => w.gym)
   waivers!: Waiver[];
+
+  @OneToMany(() => Attendance, (a) => a.gym)
+  attendances!: Attendance[];
 }
