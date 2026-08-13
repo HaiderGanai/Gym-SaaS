@@ -3,7 +3,7 @@ import {
   BadRequestException, ConflictException, Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, LessThan } from 'typeorm';
+import { Repository, In, LessThan, Between } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { MemberSubscription, SubscriptionStatus } from './entities/member-subscription.entity';
 import { MembershipPlan, PlanType } from '../plans/entities/membership-plan.entity';
@@ -11,10 +11,12 @@ import { Discount, DiscountType } from '../plans/entities/discount.entity';
 import { Gym } from '../gym/entities/gym.entity';
 import { Member } from '../members/entities/member.entity';
 import { MemberGymAccess } from '../members/entities/member-gym-access.entity';
+import { Attendance } from '../bookings/entities/attendance.entity';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { RenewSubscriptionDto } from './dto/renew-subscription.dto';
 import { InvoicesService } from '../invoices/invoices.service';
 import { scopedGymIds } from '../common/utils/gym-scope';
+import { computeSubscriptionProgress, checkInsWindow } from './subscription-progress.util';
 import { StaffRole } from '../staff/entities/staff-user.entity';
 import type { StaffJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
@@ -37,6 +39,8 @@ export class SubscriptionsService {
     private memberRepo: Repository<Member>,
     @InjectRepository(MemberGymAccess)
     private accessRepo: Repository<MemberGymAccess>,
+    @InjectRepository(Attendance)
+    private attendanceRepo: Repository<Attendance>,
     private invoicesService: InvoicesService,
   ) {}
 
@@ -136,13 +140,27 @@ export class SubscriptionsService {
     return sub;
   }
 
-  // member app: current plan summary
-  findMine(memberId: string) {
-    return this.subRepo.find({
+  // member app: current plan summary, plus derived progress fields.
+  // Attendance and subscription lifecycle are independent — a subscription
+  // still ends on schedule regardless of attendance — so total_days/
+  // days_left come purely from the subscription's own dates, and check_ins
+  // is a separate count against Attendance for the same window.
+  async findMine(memberId: string) {
+    const subs = await this.subRepo.find({
       where: { member_id: memberId },
       relations: { plan: true },
       order: { created_at: 'DESC' },
     });
+    return Promise.all(subs.map(async (sub) => {
+      const { total_days, days_left } = computeSubscriptionProgress(sub);
+      const window = checkInsWindow(sub);
+      const check_ins = window
+        ? await this.attendanceRepo.count({
+            where: { member_id: memberId, gym_id: sub.gym_id, date: Between(window.from, window.to) },
+          })
+        : 0;
+      return { ...sub, total_days, days_left, check_ins };
+    }));
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
