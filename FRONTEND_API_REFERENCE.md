@@ -323,12 +323,18 @@ GET  /members/:id                    StaffJwt    — profile + full gym_access h
 
 ### Self-update
 ```
-PATCH /members/me                    MemberJwt   — JSON or multipart/form-data
+PATCH /members/profile               MemberJwt   — JSON or multipart/form-data
 ```
 ```json
 { "full_name": "Alice M. Smith", "phone": "+447911123456", "photo_url": "https://storage.example.com/photos/alice.jpg" }
 ```
 All fields optional, send only what changes. `photo_url` can also be set by uploading an actual file: send `multipart/form-data` with an optional `photo` image field (≤2 MB) instead of/alongside the JSON fields — it uploads to Cloudinary and overwrites `photo_url` with the resulting URL.
+
+### Self-delete account
+```
+DELETE /members/profile              MemberJwt   — no body
+```
+Soft delete: cancels open subscriptions, revokes gym access, blocks future login. Invoices/bookings/attendance history are kept. Response: `{ "message": "Account deleted" }`. See `MEMBERS_MODULE_POSTMAN_ENDPOINTS.md` §8 for full details.
 
 ### Staff: update status
 ```

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, UseGuards, Req,
+  Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, Req,
   UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -80,7 +80,7 @@ export class MembersController {
   // accepts JSON, or multipart/form-data with an optional 'photo' image file
   // (uploaded to Cloudinary → photo_url)
   @UseGuards(MemberJwtGuard)
-  @Patch('me')
+  @Patch('profile')
   @UseInterceptors(FileInterceptor('photo', {
     limits: { fileSize: 2 * 1024 * 1024 },
     fileFilter: (_req, file, cb) =>
@@ -94,6 +94,15 @@ export class MembersController {
     @UploadedFile() photo?: Express.Multer.File,
   ) {
     return this.membersService.updateProfile(member.sub, dto, photo);
+  }
+
+  // self-service account deletion — soft delete, blocks future login;
+  // subscriptions/gym-access are cancelled/revoked, invoices/bookings/
+  // attendance history is untouched (see MembersService.deleteAccount)
+  @UseGuards(MemberJwtGuard)
+  @Delete('profile')
+  deleteAccount(@CurrentUser() member: MemberJwtPayload) {
+    return this.membersService.deleteAccount(member.sub);
   }
 
   @UseGuards(StaffJwtGuard, RolesGuard)

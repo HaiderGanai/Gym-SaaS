@@ -215,7 +215,7 @@ Replace `:id` with the member's UUID.
 ## 7. Member Self-Update Profile
 
 ```
-PATCH /members/me
+PATCH /members/profile
 Authorization: Bearer <member_token>
 Content-Type: application/json
 ```
@@ -248,7 +248,7 @@ Send only the fields you want to change.
 
 **Update photo (multipart, actual file upload):**
 ```
-PATCH /members/me
+PATCH /members/profile
 Authorization: Bearer <member_token>
 Content-Type: multipart/form-data
 
@@ -262,7 +262,37 @@ photo: <file>                  (optional, image, ≤2 MB — uploaded to Cloudin
 
 ---
 
-## 8. Update Member Status (staff)
+## 8. Member Self-Deletes Account
+
+```
+DELETE /members/profile
+Authorization: Bearer <member_token>
+```
+
+No request body. Soft delete — cancels open subscriptions, revokes gym access, blocks future login. Invoices, bookings, waivers, and attendance history are untouched.
+
+**Response** `200`:
+```json
+{ "message": "Account deleted" }
+```
+
+**Calling it again:**
+```json
+{ "message": "Account is already deleted", "error": "Bad Request", "statusCode": 400 }
+```
+
+**Logging in afterward** (`POST /auth/member/login`) returns the standard wrong-credentials response — a deleted account is indistinguishable from one that never existed:
+```json
+{ "message": "Invalid credentials", "error": "Unauthorized", "statusCode": 401 }
+```
+
+**Errors:**
+- `401` — not authenticated
+- `400` — account already deleted
+
+---
+
+## 9. Update Member Status (staff)
 
 ```
 PATCH /members/:id/status
@@ -300,6 +330,16 @@ Reactivating clears `pause_start` and `resume_date` automatically.
 { "status": "expired" }
 ```
 
+### Attempting `status: "deleted"` — rejected
+
+```json
+{ "status": "deleted" }
+```
+```json
+{ "message": "Account deletion is member-initiated only — use DELETE /members/profile", "error": "Bad Request", "statusCode": 400 }
+```
+Staff cannot delete a member's account through this endpoint, even `super_admin` — use `DELETE /members/profile` (member-authenticated) instead.
+
 **Response** `200`: updated member object (no sensitive fields):
 ```json
 {
@@ -327,13 +367,16 @@ Reactivating clears `pause_start` and `resume_date` automatically.
 1. POST /members/register         → create alice@test.com, get member_id
 2. POST /auth/member/login        → get member_token for alice
 3. GET  /members/profile          → (as alice) view own profile + gym_access
-4. PATCH /members/me              → (as alice) update full_name or phone
+4. PATCH /members/profile              → (as alice) update full_name or phone
 5. GET  /members                  → (as org_admin) list all members in org
 6. GET  /members/:member_id       → (as org_admin) view alice's profile
 7. PATCH /members/:id/status      → (as org_admin) pause alice { status: "paused", pause_start: "2026-07-05", resume_date: "2026-07-20" }
 8. GET  /members/:member_id       → (as org_admin) confirm status=paused with dates
 9. PATCH /members/:id/status      → (as org_admin) reactivate alice { status: "active" }
 10. GET  /members/:member_id      → (as org_admin) confirm status=active, dates cleared
+11. DELETE /members/profile       → (as alice) delete own account
+12. GET  /members/:member_id      → (as org_admin) confirm status=deleted, subscriptions cancelled, gym_access revoked
+13. POST /auth/member/login       → (as alice) confirm 401 Invalid credentials
 ```
 
 ---
@@ -349,3 +392,6 @@ Reactivating clears `pause_start` and `resume_date` automatically.
 | Invalid UUID in path | 400 | `{ "message": "Validation failed (uuid is expected)" }` |
 | Invalid status value | 400 | `{ "message": "status must be a valid enum value" }` |
 | Invalid date format for pause_start / resume_date | 400 | `{ "message": "pause_start must be a valid ISO 8601 date string" }` |
+| Staff attempts `status: "deleted"` via `PATCH /members/:id/status` | 400 | `{ "message": "Account deletion is member-initiated only — use DELETE /members/profile" }` |
+| `DELETE /members/profile` on an already-deleted account | 400 | `{ "message": "Account is already deleted" }` |
+| Login attempt on a deleted account | 401 | `{ "message": "Invalid credentials" }` |

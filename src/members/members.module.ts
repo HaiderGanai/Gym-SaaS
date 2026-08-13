@@ -4,13 +4,14 @@ import { Member } from './entities/member.entity';
 import { MemberGymAccess } from './entities/member-gym-access.entity';
 import { Waiver } from './entities/waiver.entity';
 import { Gym } from '../gym/entities/gym.entity';
+import { MemberSubscription } from '../subscriptions/entities/member-subscription.entity';
 import { MembersService } from './members.service';
 import { MembersController } from './members.controller';
 import { CommunicationModule } from '../communication/communication.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Member, MemberGymAccess, Waiver, Gym]),
+    TypeOrmModule.forFeature([Member, MemberGymAccess, Waiver, Gym, MemberSubscription]),
     CommunicationModule,
   ],
   controllers: [MembersController],

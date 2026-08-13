@@ -18,6 +18,7 @@ import { Member, MemberStatus } from './entities/member.entity';
 import { MemberGymAccess } from './entities/member-gym-access.entity';
 import { Waiver } from './entities/waiver.entity';
 import { Gym } from '../gym/entities/gym.entity';
+import { MemberSubscription, SubscriptionStatus } from '../subscriptions/entities/member-subscription.entity';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { AcceptMemberInviteDto } from './dto/accept-member-invite.dto';
@@ -53,6 +54,8 @@ export class MembersService {
     private waiverRepo: Repository<Waiver>,
     @InjectRepository(Gym)
     private gymRepo: Repository<Gym>,
+    @InjectRepository(MemberSubscription)
+    private subscriptionRepo: Repository<MemberSubscription>,
     private mailService: MailService,
     config: ConfigService,
   ) {
@@ -331,6 +334,10 @@ export class MembersService {
   }
 
   async updateStatus(memberId: string, dto: UpdateMemberStatusDto, user: StaffJwtPayload) {
+    if (dto.status === MemberStatus.DELETED) {
+      throw new BadRequestException('Account deletion is member-initiated only — use DELETE /members/profile');
+    }
+
     const member = await this.memberRepo.findOne({ where: { id: memberId } });
     if (!member) throw new NotFoundException('Member not found');
 
@@ -355,5 +362,35 @@ export class MembersService {
     const saved = await this.memberRepo.save(member);
     const { password_hash, reset_token, reset_token_expires_at, invite_token, invite_expires_at, fcm_token, ...safe } = saved as any;
     return safe;
+  }
+
+  // self-service account deletion — soft delete. Cancels every open
+  // subscription (stops billing/renewal) and revokes gym access (locks class
+  // booking + gym-door entry), but never touches invoices, bookings, waivers,
+  // or attendance history: those stay exactly as they are for financial/audit
+  // record-keeping, they just now point at a deleted member.
+  async deleteAccount(memberId: string): Promise<{ message: string }> {
+    const member = await this.memberRepo.findOne({ where: { id: memberId } });
+    if (!member) throw new NotFoundException('Member not found');
+    if (member.status === MemberStatus.DELETED) {
+      throw new BadRequestException('Account is already deleted');
+    }
+
+    await this.subscriptionRepo.update(
+      { member_id: memberId, status: In([SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED, SubscriptionStatus.PAST_DUE]) },
+      { status: SubscriptionStatus.CANCELLED },
+    );
+
+    await this.accessRepo.update(
+      { member_id: memberId, is_active: true },
+      { is_active: false, revoked_at: new Date() },
+    );
+
+    member.status = MemberStatus.DELETED;
+    member.deleted_at = new Date();
+    member.fcm_token = null!;
+    await this.memberRepo.save(member);
+
+    return { message: 'Account deleted' };
   }
 }

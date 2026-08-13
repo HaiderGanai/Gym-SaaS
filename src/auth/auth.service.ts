@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { StaffService } from '../staff/staff.service';
 import { MembersService } from '../members/members.service';
+import { MemberStatus } from '../members/entities/member.entity';
 import { Organization } from '../organization/entities/organization.entity';
 import { StaffUser, StaffRole } from '../staff/entities/staff-user.entity';
 import { StaffLoginDto } from './dto/staff-login.dto';
@@ -68,7 +69,7 @@ export class AuthService {
 
   async loginMember(dto: MemberLoginDto) {
     const member = await this.membersService.findByEmail(dto.email);
-    if (!member) throw new UnauthorizedException('Invalid credentials');
+    if (!member || member.status === MemberStatus.DELETED) throw new UnauthorizedException('Invalid credentials');
     const valid = await bcrypt.compare(dto.password, member.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     const { gym_ids, primary_gym_id } = await this.membersService.getActiveGymAccess(member.id);

@@ -16,6 +16,7 @@ export enum MemberStatus {
   PAUSED    = 'paused',
   EXPIRED   = 'expired',
   CANCELLED = 'cancelled',
+  DELETED   = 'deleted',
 }
 
 @Entity('members')
@@ -46,6 +47,12 @@ export class Member {
 
   @Column({ type: 'date', nullable: true })
   resume_date!: Date;
+
+  // set when the member self-deletes their account (DELETE /members/profile);
+  // login is blocked once set, but the row itself is never removed — invoices,
+  // subscriptions, bookings, and attendance all keep referencing member_id
+  @Column({ type: 'timestamp', nullable: true })
+  deleted_at!: Date | null;
 
   // typed as plain `string` (not `string | null`) on purpose: this repo's
   // tsconfig (isolatedModules) makes TS emit design:type "Object" for a
