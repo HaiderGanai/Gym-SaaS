@@ -17,6 +17,9 @@ export class StaffJwtStrategy extends PassportStrategy(Strategy, 'staff-jwt') {
   validate(payload: StaffJwtPayload): StaffJwtPayload {
     // member tokens have no `role`; reject them so a member JWT can't pass staff guards
     if (!payload.role) throw new UnauthorizedException();
+    // QR tokens (class/entry/desk check-in) carry a `typ` discriminator and no session
+    // fields — reject them so a printed/scanned QR can't be replayed as a bearer session token
+    if ('typ' in (payload as object)) throw new UnauthorizedException();
     return payload;
   }
 }

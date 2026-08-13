@@ -52,7 +52,7 @@ The member's app calls this immediately after scanning the desk QR. Always retur
 
 **Response `200` — denied (examples):**
 ```json
-{ "allowed": false, "reason": "Invalid QR code" }
+{ "allowed": false, "reason": "Invalid or expired code" }
 ```
 ```json
 { "allowed": false, "reason": "Access denied" }
