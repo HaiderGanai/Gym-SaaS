@@ -83,7 +83,7 @@ Organization
 - [x] **PlatformBillingModule** — org self-signup, platform plan CRUD (Stripe Product/Price), Stripe Checkout, webhook handling, payment-method CRUD, branch-quantity upgrades, cancel, super_admin subscription admin, 3-day grace period with daily reminder cron, org branding (jsonb), subscription access lock
 - [x] **Member billing chain (manual v1)** — PlansModule (plan + discount CRUD), SubscriptionsModule (staff-led subscribe with promo code, renew, pause/resume/cancel, daily past_due cron), InvoicesModule (auto-generated per period, manual pay/refund/resend, VAT breakdown, per-gym invoice numbers), VatModule (tax calc, stored per-gym period summaries, live org rollup). No member payment processor — front desk collects cash/card and marks invoices paid. See `MEMBER_BILLING_MODULE_OVERVIEW.md` + `MEMBER_BILLING_POSTMAN_ENDPOINTS.md`.
 - [x] **ClassScheduleModule** — SlotTemplate CRUD (RRULE recurring patterns), slot materialization (on create + manual `/generate` + daily 2:00 cron, 30-day rolling horizon, idempotent), one-off slots, "this occurrence only" vs `apply_to_future` edits, disable/enable with member email notification, instructor overlap checks, member slot browse with computed booking metadata. See `CLASS_SCHEDULE_MODULE_OVERVIEW.md` + `CLASS_SCHEDULE_POSTMAN_ENDPOINTS.md`.
-- [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. See `BOOKINGS_MODULE_OVERVIEW.md` + `BOOKINGS_POSTMAN_ENDPOINTS.md`.
+- [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. Also owns the printable per-gym desk entry QR and gym-attendance tracking (`Attendance`, one row per member/gym/day) — the same `markAttendanceOnce()` write path is shared by the existing staff-scanned personal entry QR and the new member-scanned desk QR, so attendance reflects a gym visit regardless of which method was used. See `ATTENDANCE_MODULE_OVERVIEW.md` + `ATTENDANCE_POSTMAN_ENDPOINTS.md`.
 - [x] **CommunicationModule + NotificationsModule** — every member-facing event (waitlist promotion, slot disabled, invoice ready, pre-class reminder, staff announcement) fires through one dispatcher that sends email (Nodemailer) + push (Firebase Cloud Messaging) + writes one `NotificationLog` row, independently best-effort per channel. Automated booking reminders (15-min cron, 2h lead time) is the previously-missing MVP feature from the feature spec. Member notification inbox (list/unread-count/mark-read/mark-all-read) + device-token registration (`POST/DELETE /notifications/device-token`). Staff announcement broadcast (`POST /communication/broadcast`) to a gym's members (all or a picked list). Owns `Booking.reminder_sent_at`. See `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md`.
 - [x] **ReportsModule** — live per-gym stats (`GET /reports/gyms/:gymId/stats`) and org-wide rollup + per-gym breakdown (`GET /reports/org/stats`): revenue (+ payment-method split), bookings, attendance/fill-rate, no-show rate, new members, churn rate — all `?period_start=&period_end=`, computed on request, nothing stored. Daily 23:55 cron emails every active org_admin an end-of-day digest (today's revenue, bookings, new members, cancelled subscriptions) via `MailService.sendDailyDigest()` directly (org_admin is staff, not a member — bypasses `NotificationsService`). No AI/LLM summarization — deliberately deferred from the feature spec's "AI daily report." See `REPORTS_MODULE_OVERVIEW.md` + `REPORTS_POSTMAN_ENDPOINTS.md`.
 
@@ -157,7 +157,7 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | DELETE | `/discounts/:id` | StaffJwt + Roles(org_admin) | Deactivate (soft — subscriptions reference it) |
 | POST | `/subscriptions` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Subscribe member to plan; auto-creates first invoice; `discount_code?`, `mark_paid?`, `payment_method?` |
 | GET | `/subscriptions` | StaffJwt | List (scoped); `?gym_id=&member_id=&status=` |
-| GET | `/subscriptions/me` | MemberJwt | Member's own subscriptions + plan |
+| GET | `/subscriptions/me` | MemberJwt | Member's own subscriptions + plan, plus derived `total_days`/`check_ins`/`days_left` (frozen while paused, zeroed once past_due/cancelled) |
 | GET | `/subscriptions/:id` | StaffJwt | Detail with plan/member/discount/invoices |
 | POST | `/subscriptions/:id/renew` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Advance period + next invoice (full price, no promo) |
 | PATCH | `/subscriptions/:id/pause` | StaffJwt + Roles(org_admin, gym_manager) | active → paused |
@@ -195,6 +195,8 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | GET | `/members/me/entry-qr` | MemberJwt | Gym-door entry QR; 403 without active subscription; `?gym_id=` |
 | POST | `/checkin/entry` | StaffJwt | Scan entry QR → `{ allowed, reason?, member, subscription? }` (live sub check) |
 | POST | `/checkin/booking` | StaffJwt | Scan class QR → marks checked_in; `{ allowed, reason?, member, class }` |
+| GET | `/gyms/:id/qr` | StaffJwt + Roles(org_admin, gym_manager) | Printable static desk QR for the gym — `{ gym_id, gym_name, qr_token, qr_image }`, non-expiring in practice (10-year token) |
+| POST | `/checkin/gym-scan` | MemberJwt | Member scans the gym's printed desk QR themselves → `{ allowed, reason?, gym?, subscription?, already_checked_in_today? }`; marks daily attendance (shared with `/checkin/entry`) |
 | GET | `/notifications` | MemberJwt | Own notification feed (email+push events); `?unread_only=true` |
 | GET | `/notifications/unread-count` | MemberJwt | `{ unread_count }` |
 | PATCH | `/notifications/:id/read` | MemberJwt | Mark one notification read |
@@ -274,6 +276,7 @@ src/plans/
 
 src/subscriptions/
   subscriptions.module.ts, subscriptions.controller.ts, subscriptions.service.ts  ← past_due cron (8:00 daily)
+  subscription-progress.util.ts  ← pure total_days/days_left/check_ins-window math, unit-tested
   entities/member-subscription.entity.ts
   dto/create-subscription.dto.ts, renew-subscription.dto.ts
 
@@ -296,9 +299,9 @@ src/schedule/
 
 src/bookings/
   bookings.module.ts
-  bookings.controller.ts  ← BookingsController (/bookings) + CheckinController (/checkin) + EntryQrController (/members/me/entry-qr)
-  bookings.service.ts     ← gates, atomic capacity claim, waitlist promotion, QR sign/verify
-  entities/booking.entity.ts
+  bookings.controller.ts  ← BookingsController (/bookings) + CheckinController (/checkin) + EntryQrController (/members/me/entry-qr) + GymQrController (/gyms/:id/qr)
+  bookings.service.ts     ← gates, atomic capacity claim, waitlist promotion, QR sign/verify, markAttendanceOnce()
+  entities/booking.entity.ts, attendance.entity.ts
   dto/create-booking.dto.ts, checkin.dto.ts
 
 src/reports/
@@ -402,6 +405,9 @@ A 15-minute cron (`NotificationsService.sendBookingReminders`) finds confirmed b
 
 **Daily digest email bypasses NotificationsService on purpose**
 `ReportsService.sendDailyDigests()` (23:55 daily) emails every active org_admin an end-of-day summary. It calls `MailService.sendDailyDigest()` directly instead of going through `NotificationsService.notify()` — `notify()` is member-scoped (loads a `Member`, writes to the member-only `NotificationLog` inbox), and an org_admin is a `StaffUser` with no in-app inbox anywhere in this system. Same narrow "call MailService directly" exception `InvoicesService.resend()` already established, for a different reason (recipient isn't a member at all, not "must throw on failure").
+
+**Attendance is derived from gym entry, not from subscription state**
+`Attendance` (`member_id, gym_id, date`, unique per day) is written by one shared `BookingsService.markAttendanceOnce()` — an atomic `INSERT ... ON CONFLICT DO NOTHING` — called from both `checkinEntry()` (staff scans the member's personal entry QR) and the new `checkinGymScan()` (member scans a static per-gym desk QR themselves, `POST /checkin/gym-scan`). The desk QR is a long-lived (10-year) signed JWT with `typ: 'gym'`, printed once by staff via `GET /gyms/:id/qr` — the token itself grants nothing, since every scan still runs the same live `activeSubscription()` check the personal entry QR uses, so pause/cancel blocks entry through either method identically. Attendance and subscription lifecycle are deliberately independent: a subscription runs its full paid period whether the member shows up once or every day. `GET /subscriptions/me` surfaces this as three fields computed at read time (no new columns on `MemberSubscription`) via the pure `subscription-progress.util.ts` — `total_days` (period length), `days_left` (countdown to `current_period_end`), and `check_ins` (count of `Attendance` rows in the current period). Both `days_left` and the `check_ins` window freeze at `paused_at` while a subscription is paused rather than continuing to count down — consistent with `applyResume()` already shifting `current_period_end` forward by the exact days spent paused, so a paused member's progress numbers don't dip and jump. Once a subscription is `past_due` or `cancelled`, all three fields report `0` — there's no live progress left to show.
 
 ## 9. JWT Payload Shapes
 
