@@ -139,7 +139,7 @@ No `password_hash`, `reset_token`, `invite_token`, or `fcm_token` in the respons
 ## 5. Member Self-Profile
 
 ```
-GET /members/me
+GET /members/profile
 Authorization: Bearer <member_token>
 ```
 
@@ -232,7 +232,7 @@ Send only the fields you want to change.
 { "phone": "+447911123456" }
 ```
 
-**Update photo:**
+**Update photo (JSON, direct URL):**
 ```json
 { "photo_url": "https://storage.example.com/photos/alice.jpg" }
 ```
@@ -245,6 +245,18 @@ Send only the fields you want to change.
   "photo_url": "https://storage.example.com/photos/alice.jpg"
 }
 ```
+
+**Update photo (multipart, actual file upload):**
+```
+PATCH /members/me
+Authorization: Bearer <member_token>
+Content-Type: multipart/form-data
+
+full_name: Alice M. Smith      (optional text field)
+phone: +447911123456           (optional text field)
+photo: <file>                  (optional, image, ≤2 MB — uploaded to Cloudinary)
+```
+`photo_url` in the response is overwritten with the Cloudinary `secure_url`, regardless of any `photo_url` text field sent in the same request.
 
 **Response** `200`: updated member object (no sensitive fields).
 
@@ -314,7 +326,7 @@ Reactivating clears `pause_start` and `resume_date` automatically.
 ```
 1. POST /members/register         → create alice@test.com, get member_id
 2. POST /auth/member/login        → get member_token for alice
-3. GET  /members/me               → (as alice) view own profile + gym_access
+3. GET  /members/profile          → (as alice) view own profile + gym_access
 4. PATCH /members/me              → (as alice) update full_name or phone
 5. GET  /members                  → (as org_admin) list all members in org
 6. GET  /members/:member_id       → (as org_admin) view alice's profile

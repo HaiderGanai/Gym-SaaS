@@ -27,9 +27,9 @@ src/members/
 | POST | `/members/invite` | StaffJwt | gym_manager, front_desk | (existing) staff invites member |
 | POST | `/members/waiver` | MemberJwt | — | (existing) member signs waiver |
 | GET | `/members` | StaffJwt | all staff | list members, role-scoped |
-| GET | `/members/me` | MemberJwt | — | member views own profile |
+| GET | `/members/profile` | MemberJwt | — | member views own profile |
 | GET | `/members/:id` | StaffJwt | all staff | staff views member profile |
-| PATCH | `/members/me` | MemberJwt | — | member updates own profile |
+| PATCH | `/members/me` | MemberJwt | — | member updates own profile; JSON or multipart with a `photo` file (Cloudinary) |
 | PATCH | `/members/:id/status` | StaffJwt | org_admin, gym_manager | pause / cancel / reactivate |
 
 ---
@@ -46,9 +46,9 @@ src/members/
 
 `org_admin` needs gym IDs for their org, which requires a `gymRepo` query (see below). `gym_manager` and `front_desk` already have `gym_ids` in their JWT.
 
-### GET /members/me — Member self-profile
+### GET /members/profile — Member self-profile
 
-Returns the authenticated member's own profile plus their active `MemberGymAccess` rows. Uses `MemberJwtGuard` — this route must be declared **before** `GET /members/:id` in the controller to avoid NestJS matching the literal string "me" as a UUID param.
+Returns the authenticated member's own profile plus their active `MemberGymAccess` rows. Uses `MemberJwtGuard` — this route must be declared **before** `GET /members/:id` in the controller to avoid NestJS matching a literal string as a UUID param.
 
 ### GET /members/:id — Staff views member
 
@@ -61,7 +61,7 @@ Returns the member profile plus their **full** `MemberGymAccess` history (all ro
 
 ### PATCH /members/me — Member self-update
 
-Member can update `full_name`, `phone`, and `photo_url`. No staff involvement. Sensitive fields are stripped from the response.
+Member can update `full_name`, `phone`, and `photo_url`. No staff involvement. Sensitive fields are stripped from the response. Also accepts `multipart/form-data` with an optional `photo` image file (≤2 MB) — uploaded to Cloudinary (`gym-saas/member-photos` folder), same pattern as the org logo upload on `PATCH /organizations/:id`. A file, if present, wins over any `photo_url` field sent in the same request.
 
 ### PATCH /members/:id/status — Staff updates member status
 
@@ -103,4 +103,4 @@ Used in `findAll`, `findOne`, and `updateStatus` — three call sites justify th
 - **No sensitive fields in responses**: `MEMBER_SAFE_SELECT` selects only `id`, `email`, `full_name`, `phone`, `photo_url`, `status`, `pause_start`, `resume_date`, `created_at`. `updateProfile` and `updateStatus` destructure off `password_hash`, `reset_token`, `reset_token_expires_at`, `invite_token`, `invite_expires_at`, `fcm_token` before returning.
 - **Members cannot change their own status**: `PATCH /members/:id/status` uses `StaffJwtGuard` — only staff can pause or cancel a membership.
 - **Cross-gym access blocked**: gym_manager cannot list or view members from gyms they're not assigned to. The `resolveGymIds` helper ensures the gym_ids fence holds across all three management endpoints.
-- **Route ordering matters**: `GET /members/me` and `PATCH /members/me` are declared before `GET /members/:id` and `PATCH /members/:id/status` in the controller. NestJS matches routes top-to-bottom; if `:id` came first, the literal "me" would be captured as a UUID param and fail `ParseUUIDPipe`.
+- **Route ordering matters**: `GET /members/profile` and `PATCH /members/me` are declared before `GET /members/:id` and `PATCH /members/:id/status` in the controller. NestJS matches routes top-to-bottom; if `:id` came first, a literal path segment would be captured as a UUID param and fail `ParseUUIDPipe`.

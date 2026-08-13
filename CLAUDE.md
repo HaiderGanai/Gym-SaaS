@@ -67,6 +67,7 @@ Organization
 | `NotificationsModule` | The full member communication layer: pairs every member-facing email with a push notification (Firebase) and an in-app inbox row, automated pre-class booking reminders (cron), staff announcement broadcast, member notification inbox + device-token registration |
 | `ReportsModule` | Live statistics for staff dashboards: revenue, bookings, attendance, no-shows, fill rate, churn — per gym and org-wide rollup. End-of-day digest email to every org_admin. No AI/LLM — pure SQL aggregation |
 | `PlatformBillingModule` | **Platform-level billing**: orgs pay the super_admin via Stripe. Platform plans (monthly/quarterly/yearly, priced per branch), checkout, webhooks, payment-method CRUD, grace-period cron, subscription lock (SubscriptionInterceptor) |
+| `HelpModule` | Static Help & Legal content for the member app: FAQs, privacy policy, terms of service. Public, no DB table — hardcoded placeholder copy pending real legal text |
 
 ## 6. Build Status
 
@@ -86,6 +87,7 @@ Organization
 - [x] **BookingsModule** — member booking with layered gates (active member + gym access + active subscription at the gym + booking window + credits), atomic capacity claim, waitlist with auto-promotion + email, member/staff cancel (cutoff vs override), no-show marking, class check-in QR (expires with the slot) and gym-door entry QR (expires with the subscription period, live-revoked on pause/cancel), scanner-friendly `POST /checkin/*` endpoints. Owns all `Slot.booking_count` mutations. See `BOOKINGS_MODULE_OVERVIEW.md` + `BOOKINGS_POSTMAN_ENDPOINTS.md`.
 - [x] **CommunicationModule + NotificationsModule** — every member-facing event (waitlist promotion, slot disabled, invoice ready, pre-class reminder, staff announcement) fires through one dispatcher that sends email (Nodemailer) + push (Firebase Cloud Messaging) + writes one `NotificationLog` row, independently best-effort per channel. Automated booking reminders (15-min cron, 2h lead time) is the previously-missing MVP feature from the feature spec. Member notification inbox (list/unread-count/mark-read/mark-all-read) + device-token registration (`POST/DELETE /notifications/device-token`). Staff announcement broadcast (`POST /communication/broadcast`) to a gym's members (all or a picked list). Owns `Booking.reminder_sent_at`. See `COMMUNICATION_MODULE_OVERVIEW.md` + `COMMUNICATION_POSTMAN_ENDPOINTS.md`.
 - [x] **ReportsModule** — live per-gym stats (`GET /reports/gyms/:gymId/stats`) and org-wide rollup + per-gym breakdown (`GET /reports/org/stats`): revenue (+ payment-method split), bookings, attendance/fill-rate, no-show rate, new members, churn rate — all `?period_start=&period_end=`, computed on request, nothing stored. Daily 23:55 cron emails every active org_admin an end-of-day digest (today's revenue, bookings, new members, cancelled subscriptions) via `MailService.sendDailyDigest()` directly (org_admin is staff, not a member — bypasses `NotificationsService`). No AI/LLM summarization — deliberately deferred from the feature spec's "AI daily report." See `REPORTS_MODULE_OVERVIEW.md` + `REPORTS_POSTMAN_ENDPOINTS.md`.
+- [x] **HelpModule** — Help & Legal content for the member app: `GET /help/faqs`, `GET /help/privacy-policy`, `GET /help/terms`. Public, unguarded, hardcoded placeholder copy (no DB table) — real legal text to be swapped in later. See `HELP_MODULE_POSTMAN_ENDPOINTS.md`.
 
 ### Active Endpoints
 
@@ -94,7 +96,7 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | Method | Path | Guard | Who |
 |---|---|---|---|
 | POST | `/auth/staff/login` | Public | Any staff — returns `access_token` + `organization` branding block (null for super_admin) |
-| POST | `/auth/member/login` | Public | Any member — returns `access_token` + `organization` branding block (via primary gym) |
+| POST | `/auth/member/login` | Public | Any member — returns `access_token` + `member_id` + `organization` branding block (via primary gym) |
 | POST | `/auth/staff/invite/accept` | Public | Invited staff (via email link) — same response shape as login |
 | POST | `/auth/member/invite/accept` | Public | Invited member (via email link) — same response shape as login |
 | POST | `/auth/staff/forgot-password` | Public | Any staff — sends 6-digit OTP to email |
@@ -125,9 +127,9 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | POST | `/staff/:id/gym-access` | StaffJwt + Roles(org_admin, gym_manager) | Grant gym access; gym_manager limited to own gyms |
 | DELETE | `/staff/:id/gym-access/:gymId` | StaffJwt + Roles(org_admin, gym_manager) | Revoke gym access; gym_manager limited to own gyms; sets is_active=false + revoked_at |
 | GET | `/members` | StaffJwt | All staff — result scoped by role (super_admin=all, org_admin=own org gyms, gym_manager/front_desk=assigned gyms) |
-| GET | `/members/me` | MemberJwt | Member views own profile + active gym access |
+| GET | `/members/profile` | MemberJwt | Member views own profile + active gym access |
 | GET | `/members/:id` | StaffJwt | Staff views member profile + full gym access history |
-| PATCH | `/members/me` | MemberJwt | Member updates own full_name / phone / photo_url |
+| PATCH | `/members/me` | MemberJwt | Member updates own full_name / phone / photo_url; accepts JSON or multipart/form-data with a `photo` image file (≤2 MB, uploaded to Cloudinary) |
 | PATCH | `/members/:id/status` | StaffJwt + Roles(org_admin, gym_manager) | Pause (with dates) / cancel / reactivate member |
 | POST | `/auth/org/signup` | Public | Org self-signup: creates Organization (`pending`) + org_admin, returns JWT |
 | GET | `/platform/plans` | Public | List active platform plans (pricing page) |
@@ -161,7 +163,9 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | GET | `/subscriptions/:id` | StaffJwt | Detail with plan/member/discount/invoices |
 | POST | `/subscriptions/:id/renew` | StaffJwt + Roles(org_admin, gym_manager, front_desk) | Advance period + next invoice (full price, no promo) |
 | PATCH | `/subscriptions/:id/pause` | StaffJwt + Roles(org_admin, gym_manager) | active → paused |
-| PATCH | `/subscriptions/:id/resume` | StaffJwt + Roles(org_admin, gym_manager) | paused → active |
+| PATCH | `/subscriptions/:id/resume` | StaffJwt + Roles(org_admin, gym_manager) | paused → active; shifts `current_period_end` forward by days spent paused |
+| PATCH | `/subscriptions/me/:id/pause` | MemberJwt | Member pauses own subscription (must own it); active → paused |
+| PATCH | `/subscriptions/me/:id/resume` | MemberJwt | Member resumes own subscription; paused → active; same date-shift as staff resume |
 | PATCH | `/subscriptions/:id/cancel` | StaffJwt + Roles(org_admin, gym_manager) | → cancelled (permanent) |
 | GET | `/invoices` | StaffJwt | List (scoped); `?gym_id=&member_id=&status=` |
 | GET | `/invoices/me` | MemberJwt | Member's own invoice history |
@@ -179,7 +183,7 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | PATCH | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Update; `apply_to_future: true` propagates to future slots (timing changes regenerate empty slots, booked ones kept); `generate_until?` extends the materialized window in the same call (idempotent, max 366 days; response reports new `generated_until`) — replaces the old standalone `/generate` endpoint |
 | DELETE | `/schedule/templates/:id` | StaffJwt + Roles(org_admin, gym_manager) | Deactivate (soft); removes future empty slots, keeps booked |
 | POST | `/schedule/slots` | StaffJwt + Roles(org_admin, gym_manager) | One-off custom slot; 409 on instructor overlap |
-| GET | `/schedule/slots` | StaffJwt | Calendar (scoped); `?gym_id=&from=&to=&status=&template_id=` (default today → +30d) |
+| GET | `/schedule/slots` | StaffJwt | Calendar (scoped); `?gym_id=&from=&to=&status=&template_id=&month=` (default today → +30d); `month=YYYY-MM` pages by calendar month and overrides `from`/`to` |
 | GET | `/schedule/slots/browse` | MemberJwt | Enabled future slots in member's gyms + `spots_remaining`/`is_full`/`booking_open` etc. |
 | GET | `/schedule/slots/:id` | StaffJwt | Slot detail + roster preview (bookings with member info) |
 | PATCH | `/schedule/slots/:id` | StaffJwt + Roles(org_admin, gym_manager) | Edit this occurrence only; 409 if capacity < bookings or instructor overlap |
@@ -192,7 +196,7 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | GET | `/bookings` | StaffJwt | List/roster (scoped); `?gym_id=&slot_id=&member_id=&status=` |
 | PATCH | `/bookings/:id/staff-cancel` | StaffJwt | Cutoff-free cancel (front-desk override); runs promotion |
 | PATCH | `/bookings/:id/no-show` | StaffJwt | confirmed → no_show, only after class start |
-| GET | `/members/me/entry-qr` | MemberJwt | Gym-door entry QR; 403 without active subscription; `?gym_id=` |
+| GET | `/members/me/entry-qr` | MemberJwt | Gym-door entry QR — `{ qr_token, qr_image, gym_id, valid_until }`, `qr_image` a base64 PNG data URI; 403 without active subscription; `?gym_id=` |
 | POST | `/checkin/entry` | StaffJwt | Scan entry QR → `{ allowed, reason?, member, subscription? }` (live sub check) |
 | POST | `/checkin/booking` | StaffJwt | Scan class QR → marks checked_in; `{ allowed, reason?, member, class }` |
 | GET | `/notifications` | MemberJwt | Own notification feed (email+push events); `?unread_only=true` |
@@ -204,6 +208,9 @@ All routes are prefixed with `/api/v1`. Base URL in dev: `http://localhost:3000/
 | POST | `/communication/broadcast` | StaffJwt + Roles(org_admin, gym_manager) | `{ gym_id, member_ids?, title, body }` — announcement to a gym's members (all, or a picked list); email + push + inbox |
 | GET | `/reports/gyms/:gymId/stats` | StaffJwt + Roles(org_admin, gym_manager) | Live per-gym stats; `?period_start=&period_end=` (required, `period_end` exclusive) |
 | GET | `/reports/org/stats` | StaffJwt + Roles(org_admin) | Live org-wide rollup + per-gym breakdown; `?period_start=&period_end=`; super_admin gets 400 (use per-gym instead) |
+| GET | `/help/faqs` | Public | List of `{ id, question, answer }` — hardcoded placeholder content |
+| GET | `/help/privacy-policy` | Public | `{ title, updated_at, content }` — hardcoded placeholder content |
+| GET | `/help/terms` | Public | `{ title, updated_at, content }` — hardcoded placeholder content |
 
 ### Key files
 
@@ -305,6 +312,10 @@ src/reports/
   reports.module.ts, reports.controller.ts
   reports.service.ts  ← computeMetrics() (5 grouped queries, shared by both endpoints + the digest cron), sendDailyDigests() cron (23:55 daily)
 
+src/help/
+  help.module.ts, help.controller.ts
+  help.service.ts  ← FAQS/PRIVACY_POLICY/TERMS constants — no entity, no DB table
+
 src/common/utils/gym-scope.ts  ← scopedGymIds() / assertGymAccess() — shared staff gym-scoping helpers
 
 src/main.ts   ← global ValidationPipe, setGlobalPrefix('api/v1'), rawBody:true (Stripe webhook)
@@ -325,6 +336,7 @@ seed.js       ← creates super_admin + org + gym + org_admin; run with node see
 - [x] BookingsModule — booking gates, waitlist + promotion, class QR check-in, gym-door entry QR, no-show, staff roster
 - [x] CommunicationModule + NotificationsModule — every member email paired with push (Firebase) + in-app inbox row, automated booking-reminder cron, staff announcement broadcast, device-token registration
 - [x] ReportsModule — live per-gym + org-rollup statistics endpoints, daily digest email to org_admin; no AI/LLM (deferred from spec)
+- [x] HelpModule — static FAQs/privacy-policy/terms endpoints, hardcoded placeholder content
 
 ## 8. Key Architectural Decisions
 
@@ -346,11 +358,17 @@ One Stripe Price per plan; checkout quantity = branches paid for. `GymService.cr
 **Org branding ships in the login response**
 `POST /auth/staff/login`, `POST /auth/member/login` and both invite-accept endpoints return `organization: { id, name, logo_url, branding, ... }` alongside `access_token`, so the app can theme itself before making any authenticated call. Staff orgs resolve via `organization_id` (null for super_admin → `organization: null`); members resolve via their `primary_gym_id` → gym → organization. `branding.primary_color` / `branding.secondary_color` / `branding.accent` / `branding.logo_url` are **guaranteed present** — platform defaults (`#111827` / `#6B7280` / `#F59E0B` / null) fill anything the org hasn't customized. All three colors are validated hex, top-level fields on `PATCH /organizations/:id` (stored inside `branding`, same pattern as `accent`).
 
+**Member login responses carry `member_id`**
+`POST /auth/member/login` and `POST /auth/member/invite/accept` both return `member_id` (the same value as the JWT's `sub` claim) alongside `access_token` and `organization`, so the app has the member's own ID without needing to decode the token. Staff login intentionally doesn't carry an equivalent top-level `staff_id` — not asked for, add it the same way if it comes up.
+
 **Branch visibility in `organization` is role-scoped, not just present/absent**
 The `organization` object carries **one of two mutually-exclusive keys**, decided in `AuthService.brandingShape()` — never both: `org_admin` (and `super_admin`, though `super_admin` never reaches this since `organization` is `null` for them) gets `gyms: { id, name, type }[]` — every branch in the org, because org-wide admin needs the whole roster. Every other role — `gym_manager`, `front_desk`, and every member — gets `branch: { id, name, type }[]` instead, filtered down to only the gym(s) that role is actually affiliated with (`StaffJwtPayload.gym_ids` / `MemberJwtPayload.gym_ids`); staffed/affiliated with more than one branch returns all of them, not just one. Same rule applies to `GET /organizations/:id` (`OrganizationService.findOne()`) — `org_admin`/`super_admin` get the full `gyms` relation, `gym_manager`/`front_desk` get a `branch` array instead, which is also why that endpoint's `@Roles` was widened from `org_admin`-only to include `gym_manager`/`front_desk` (the existing `user.org_id !== id` check already prevented cross-org access, so widening the roles doesn't loosen tenant isolation — it only lets more of *your own* org's staff read it). Both entries are the same lean `{ id, name, type }` projection, not the full `Gym` row.
 
 **Org branding is a jsonb blob**
 `Organization.branding` (jsonb) holds the org's app theme (colors, fonts, sizes). Updated through the existing `PATCH /organizations/:id`; the frontend owns the shape. Updates **merge** into the existing blob. `accent` is a top-level DTO field (hex-validated) stored as `branding.accent`. The same endpoint accepts multipart/form-data with a `logo` image file (≤2 MB) uploaded to **Cloudinary** (`gym-saas/org-logos` folder) and saved as `logo_url` — env vars `CLOUDINARY_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET`. On multipart requests `branding` arrives as a JSON string and is parsed by a `@Transform` in the DTO.
+
+**Member profile photo mirrors org logo upload**
+`PATCH /members/me` follows the same multipart pattern as `PATCH /organizations/:id`: an optional `photo` image file (≤2 MB) uploads to Cloudinary (`gym-saas/member-photos` folder) and overwrites `Member.photo_url`; JSON-only requests can still set `photo_url` directly. `GET /members/profile` (renamed from `/members/me` — the entry-QR route `GET /members/me/entry-qr` is unrelated and unchanged) returns it alongside the rest of the member's own profile.
 
 **Junction tables for gym access**
 Staff and Members have no direct FK to Gym. Access is always through `StaffGymAccess` and `MemberGymAccess`. One staff/member can belong to multiple branches; each row has its own lifecycle (granted → revoked).
@@ -376,14 +394,17 @@ Both staff and members use a 6-digit numeric OTP (stored in `reset_token`, expir
 **synchronize off in production**
 `TypeOrmModule` sets `synchronize: config.get('NODE_ENV') !== 'production'`. Run migrations explicitly in production.
 
+**Subscription pause preserves remaining membership time**
+`MemberSubscription.paused_at` is stamped on pause and read on resume: `resume()` computes whole days elapsed since `paused_at` and adds them onto `current_period_end`, so a pause never costs the member paid time (6 Aug–6 Sep, paused a week mid-period, resumed → new end date is 13 Sep). While paused, every benefit gate (`BookingsService.activeSubscription()`, entry-QR live check) requires `status === active`, not just an unexpired period, so a paused member gets zero class booking / gym-door access until they resume — no separate "block while paused" code needed, it falls out of the existing active-only checks. Staff (`PATCH /subscriptions/:id/pause|resume`, org_admin/gym_manager) and the member themself (`PATCH /subscriptions/me/:id/pause|resume`, ownership-checked against `member_id`) share the same `applyPause()`/`applyResume()` service logic — one pause/resume behavior regardless of who triggers it. No cooldown or max-pause-count — not asked for, add if abuse shows up.
+
 **Member billing is manual (v1)**
 No payment processor for members yet — front desk collects cash/card in person. Creating a subscription auto-generates a `pending` invoice; `PATCH /invoices/:id/pay` (or `mark_paid: true` at creation) records the money. Renewals are explicit (`POST /subscriptions/:id/renew`); a daily 8:00 cron flags lapsed recurring subs `past_due` (payg/class_pack never recur — they get 1-year validity), and paying a past_due sub's invoice re-activates it. Discounts are first-invoice-only promo codes (usage-counted, expiry-checked); renewals charge full price. Plans archive, discounts deactivate — never hard-delete (FK references). Tax math is centralized in `VatService.computeTax()`: rate = plan `vat_rate_override` → gym `default_tax_rate`, zero when VAT-exempt or `tax_mode = none`; `tax_inclusive` gyms derive net from gross. `stripe_*` / `gocardless_*` columns are reserved for future online billing. One ongoing subscription per member per gym.
 
 **Class schedule: templates materialize real slot rows**
-`SlotTemplate.rrule` is a full RFC 5545 string (must include `DTSTART`, UTC) expanded with the `rrule` package. Slots are materialized ahead of time — on template create, via `generate_until` on `PATCH /schedule/templates/:id` (folded into the same endpoint as every other template edit, no standalone `/generate` route), and by a daily 2:00 cron keeping a 30-day rolling horizon — never computed per request. Generation is idempotent (skips existing `starts_at` per template) and skips instructor-overlap occurrences. Each Slot snapshots capacity/instructor/`booking_window_hours`/`cancellation_cutoff_hours` from the template so single occurrences are editable independently ("this occurrence only") and one-off slots work identically; `apply_to_future: true` on a template PATCH propagates instead (timing changes delete+regenerate future *empty* slots, booked ones are kept). Capacity can never drop below `booking_count` (409). Disable ≠ delete: disable keeps bookings and emails affected members; hard delete only with zero bookings. Members never see disabled slots; `GET /schedule/slots/browse` annotates each slot with `spots_remaining`, `is_full`, `booking_opens_at`, `cancellation_cutoff_at`, `booking_open` — enforcement lands in BookingsModule, which will also own `booking_count` increments.
+`SlotTemplate.rrule` is a full RFC 5545 string (must include `DTSTART`, UTC) expanded with the `rrule` package. Slots are materialized ahead of time — on template create, via `generate_until` on `PATCH /schedule/templates/:id` (folded into the same endpoint as every other template edit, no standalone `/generate` route), and by a daily 2:00 cron keeping a 30-day rolling horizon — never computed per request. Generation is idempotent (skips existing `starts_at` per template) and skips instructor-overlap occurrences. Each Slot snapshots capacity/instructor/`booking_window_hours`/`cancellation_cutoff_hours` from the template so single occurrences are editable independently ("this occurrence only") and one-off slots work identically; `apply_to_future: true` on a template PATCH propagates instead (timing changes delete+regenerate future *empty* slots, booked ones are kept). Capacity can never drop below `booking_count` (409). `GET /schedule/slots?month=YYYY-MM` is the month-pagination path for staff calendar UIs — it replaces `from`/`to` with that calendar month's bounds (400 on a malformed value); `from`/`to` still work directly for arbitrary ranges. Disable ≠ delete: disable keeps bookings and emails affected members; hard delete only with zero bookings. Members never see disabled slots; `GET /schedule/slots/browse` annotates each slot with `spots_remaining`, `is_full`, `booking_opens_at`, `cancellation_cutoff_at`, `booking_open` — enforcement lands in BookingsModule, which will also own `booking_count` increments.
 
 **Bookings: subscription-gated, two QR codes, derived credits**
-Booking requires an active `MemberSubscription` at the slot's gym (the manual-billing collection lever: `past_due`/`paused` block booking). Capacity is claimed with one atomic `UPDATE … WHERE booking_count < capacity` (race-safe); full classes waitlist, and a confirmed cancellation promotes the lowest `waitlist_position` (QR issued + email, `booking_count` unchanged). `booking_count` counts confirmed only, and BookingsModule owns all its mutations. Class-pack/PAYG credits are derived — count of non-cancelled bookings at the gym in the current period vs `included_credits` — so in-time cancellation refunds automatically. Two signed-JWT QRs with distinct `typ` claims: the **class QR** (`booking_id + member_id + slot_id`, expires at slot end, issued on confirm/promotion) and the **gym-door entry QR** (`member_id + gym_id`, fetched on demand at `GET /members/me/entry-qr`, never stored, expires at `current_period_end`; the scan does one live DB check so pause/cancel revokes mid-period). Scan endpoints return `200 { allowed, reason }` for scanner UX instead of HTTP errors. Member cancel respects the slot's `cancellation_cutoff_hours`; `staff-cancel` overrides it. No unique (slot, member) constraint — cancelled rows must not block rebooking; a pre-query blocks duplicates.
+Booking requires an active `MemberSubscription` at the slot's gym (the manual-billing collection lever: `past_due`/`paused` block booking). Capacity is claimed with one atomic `UPDATE … WHERE booking_count < capacity` (race-safe); full classes waitlist, and a confirmed cancellation promotes the lowest `waitlist_position` (QR issued + email, `booking_count` unchanged). `booking_count` counts confirmed only, and BookingsModule owns all its mutations. Class-pack/PAYG credits are derived — count of non-cancelled bookings at the gym in the current period vs `included_credits` — so in-time cancellation refunds automatically. Two signed-JWT QRs with distinct `typ` claims: the **class QR** (`booking_id + member_id + slot_id`, expires at slot end, issued on confirm/promotion) and the **gym-door entry QR** (`member_id + gym_id`, fetched on demand at `GET /members/me/entry-qr`, never stored, expires at `current_period_end`; the scan does one live DB check so pause/cancel revokes mid-period). Scan endpoints return `200 { allowed, reason }` for scanner UX instead of HTTP errors. Every response carrying a QR also carries a rendered `qr_image` (base64 PNG data URI, via the `qrcode` package) alongside the raw `qr_token` — `POST /bookings`, `GET /bookings/me`, and `GET /members/me/entry-qr` all render on the fly from the same token at request time, nothing stored as an image either. Because the underlying token is already regenerated per-request (entry QR) or already carries live-checked claims (class QR), and the scan itself re-checks the DB, a subscription change is reflected the next time the member's app fetches the QR — no separate image-invalidation step needed. Member cancel respects the slot's `cancellation_cutoff_hours`; `staff-cancel` overrides it. No unique (slot, member) constraint — cancelled rows must not block rebooking; a pre-query blocks duplicates.
 
 **Notifications: one dispatcher, two channels, one inbox row per event**
 `NotificationsService.notify()` is the single place every member-facing event goes through: waitlist promotion, slot disabled, invoice ready (auto-created and on manual resend), pre-class booking reminders, and staff-composed announcements. It looks the member up itself (callers only ever pass a `member_id`), attempts email (via `MailService`) and push (via `FirebaseService`/FCM) **independently** — one channel failing never blocks the other or the log write — and writes exactly **one** `NotificationLog` row per event (not per channel), which doubles as both the member's in-app notification feed and the delivery audit trail (`email_status`/`push_status` on the same row, so the inbox never shows duplicate entries for one event). `InvoicesService.resend()` is the one exception: it calls `MailService` directly so a failed resend still throws and tells staff (`notify()`'s contract is best-effort, the opposite of what an explicit "resend" needs), then logs the push+inbox side via `logInvoiceResent()` once the email is confirmed sent.
@@ -402,6 +423,9 @@ A 15-minute cron (`NotificationsService.sendBookingReminders`) finds confirmed b
 
 **Daily digest email bypasses NotificationsService on purpose**
 `ReportsService.sendDailyDigests()` (23:55 daily) emails every active org_admin an end-of-day summary. It calls `MailService.sendDailyDigest()` directly instead of going through `NotificationsService.notify()` — `notify()` is member-scoped (loads a `Member`, writes to the member-only `NotificationLog` inbox), and an org_admin is a `StaffUser` with no in-app inbox anywhere in this system. Same narrow "call MailService directly" exception `InvoicesService.resend()` already established, for a different reason (recipient isn't a member at all, not "must throw on failure").
+
+**Help & Legal content is hardcoded, not stored**
+`HelpModule` (`GET /help/faqs`, `/help/privacy-policy`, `/help/terms`) is deliberately DB-free — the module was requested with "any dummy data is valid, we'll update it later," so `HelpService` returns constants instead of standing up an entity/CRUD/admin-edit flow nobody asked for yet. Routes are `Public`-equivalent by omission: no controller carries `@UseGuards`, and since no `APP_GUARD` is registered globally, they're reachable unauthenticated without needing a `@Public()` decorator; the global `SubscriptionInterceptor` no-ops on them too (it only acts when `request.user` is populated by a JWT guard). If this needs to become staff-editable later, swap the constants for a single-row entity + `PATCH` — no route/shape change needed by callers.
 
 ## 9. JWT Payload Shapes
 

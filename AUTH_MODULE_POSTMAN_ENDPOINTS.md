@@ -57,9 +57,10 @@ Content-Type: application/json
 
 **Response** `201`:
 ```json
-{ "access_token": "<jwt>" }
+{ "access_token": "<jwt>", "member_id": "<uuid>", "organization": { "...": "branding block, see CLAUDE.md" } }
 ```
 
+`member_id` is the member's own ID (same value as the JWT's `sub` claim).
 JWT payload: `sub`, `email`, `gym_ids`, `primary_gym_id`, `status`.
 
 ---
@@ -261,10 +262,10 @@ Content-Type: application/json
 
 **Response** `201`:
 ```json
-{ "access_token": "<jwt>" }
+{ "access_token": "<jwt>", "member_id": "<uuid>", "organization": { "...": "branding block, see CLAUDE.md" } }
 ```
 
-Account is active immediately. JWT contains `gym_ids` populated from the invite.
+Account is active immediately. JWT contains `gym_ids` populated from the invite. `member_id` is the member's own ID (same value as the JWT's `sub` claim).
 
 ---
 

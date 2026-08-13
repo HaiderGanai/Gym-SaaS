@@ -27,6 +27,7 @@ and `Content-Type: application/json` where a body is sent.
     "status": "confirmed",
     "waitlist_position": null,
     "qr_token": "eyJhbGciOiJIUzI1NiIs…",
+    "qr_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgA…",
     "checked_in_at": null,
     "cancelled_at": null,
     "created_at": "2026-07-17T12:00:00.000Z",
@@ -39,7 +40,7 @@ and `Content-Type: application/json` where a body is sent.
 ```json
 {
   "message": "Class is full — you are on the waitlist (position 2)",
-  "booking": { "…": "…", "status": "waitlisted", "waitlist_position": 2, "qr_token": null }
+  "booking": { "…": "…", "status": "waitlisted", "waitlist_position": 2, "qr_token": null, "qr_image": null }
 }
 ```
 
@@ -55,8 +56,9 @@ booking window not open yet · `409` already booked this slot / overlapping book
 **GET** `/bookings/me?include_past=true` — include finished + cancelled ones
 
 No body. Returns bookings (each with its `slot`) ordered by class start time.
-Default: only upcoming, non-cancelled. The `qr_token` for each confirmed booking
-is here — the app renders it as the class check-in QR.
+Default: only upcoming, non-cancelled. Each confirmed booking carries `qr_token`
+and `qr_image` (base64 PNG data URI, ready to display as-is — no client-side QR
+rendering needed) for the class check-in QR; both are `null` while waitlisted.
 
 ---
 
@@ -119,12 +121,17 @@ The promoted member is emailed automatically (best-effort).
 ```json
 {
   "qr_token": "eyJhbGciOiJIUzI1NiIs…",
+  "qr_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgA…",
   "gym_id": "7ce512e2-8b75-4c5b-9bb5-bea3b88a5496",
   "valid_until": "2026-08-16T23:59:59.999Z"
 }
 ```
-`valid_until` = subscription `current_period_end`. Render `qr_token` as a QR code.
-Refetch on screen open — never cache it.
+`valid_until` = subscription `current_period_end`. `qr_image` is a ready-to-render
+base64 PNG data URI (`<img src="{qr_image}">` and you're done — no client-side QR
+library needed). `qr_token` is still included for completeness/debugging.
+Refetch on screen open — never cache it. Since it's generated fresh from the live
+subscription every call, and the scan itself re-checks the DB, a pause/cancel/plan
+change is reflected automatically on the next fetch — no manual invalidation step.
 
 **403** when there is no active subscription at that gym:
 `"No active subscription — renew your membership to get an entry code"`

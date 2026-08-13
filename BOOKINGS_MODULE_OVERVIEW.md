@@ -118,6 +118,12 @@ That means:
 Both are signed JWTs (same `JWT_SECRET` as logins). **Different `typ` claims — an
 entry code can never be replayed as a class code or vice versa.**
 
+Every response carrying one of these tokens also carries a ready-to-render
+**`qr_image`** — a base64 PNG data URI generated server-side from the token
+(`qrcode` npm package) at request time. Nothing is stored as an image; it's
+rendered fresh alongside the token every time, same as the token itself. The
+frontend just does `<img src={qr_image}>` — no client-side QR library needed.
+
 ### Class/booking QR (per booking)
 
 - Issued when a booking becomes `confirmed` (at booking time, or at waitlist
