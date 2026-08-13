@@ -139,6 +139,8 @@ Body optional — omit to leave the new invoice `pending`. Lapsed subscriptions 
 
 **Automatic:** a daily 8:00 cron marks recurring (monthly/weekly/yearly) subscriptions whose period ended without renewal as `past_due`. Paying their invoice re-activates them.
 
+**Pause/resume responses carry progress fields:** `pause`/`resume` (and their member self-service equivalents, `PATCH /subscriptions/me/:id/pause|resume`) now return the same `total_days`/`days_left`/`check_ins` fields as `GET /subscriptions/me` — the caller sees the post-action numbers immediately, no re-fetch needed. See `ATTENDANCE_POSTMAN_ENDPOINTS.md` for what each field means.
+
 ---
 
 ## 4. Invoices

@@ -140,27 +140,31 @@ export class SubscriptionsService {
     return sub;
   }
 
-  // member app: current plan summary, plus derived progress fields.
   // Attendance and subscription lifecycle are independent — a subscription
   // still ends on schedule regardless of attendance — so total_days/
   // days_left come purely from the subscription's own dates, and check_ins
-  // is a separate count against Attendance for the same window.
+  // is a separate count against Attendance for the same window. Shared by
+  // findMine() and the pause/resume responses (staff + member self-service)
+  // so a caller never has to re-fetch to see the post-action numbers.
+  private async withProgress(sub: MemberSubscription) {
+    const { total_days, days_left } = computeSubscriptionProgress(sub);
+    const window = checkInsWindow(sub);
+    const check_ins = window
+      ? await this.attendanceRepo.count({
+          where: { member_id: sub.member_id, gym_id: sub.gym_id, date: Between(window.from, window.to) },
+        })
+      : 0;
+    return { ...sub, total_days, days_left, check_ins };
+  }
+
+  // member app: current plan summary, plus derived progress fields.
   async findMine(memberId: string) {
     const subs = await this.subRepo.find({
       where: { member_id: memberId },
       relations: { plan: true },
       order: { created_at: 'DESC' },
     });
-    return Promise.all(subs.map(async (sub) => {
-      const { total_days, days_left } = computeSubscriptionProgress(sub);
-      const window = checkInsWindow(sub);
-      const check_ins = window
-        ? await this.attendanceRepo.count({
-            where: { member_id: memberId, gym_id: sub.gym_id, date: Between(window.from, window.to) },
-          })
-        : 0;
-      return { ...sub, total_days, days_left, check_ins };
-    }));
+    return Promise.all(subs.map((sub) => this.withProgress(sub)));
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -220,19 +224,20 @@ export class SubscriptionsService {
     return sub;
   }
 
-  private applyPause(sub: MemberSubscription) {
+  private async applyPause(sub: MemberSubscription) {
     if (sub.status !== SubscriptionStatus.ACTIVE) {
       throw new BadRequestException(`Only active subscriptions can be paused (current: ${sub.status})`);
     }
     sub.status = SubscriptionStatus.PAUSED;
     sub.paused_at = new Date();
-    return this.subRepo.save(sub);
+    const saved = await this.subRepo.save(sub);
+    return this.withProgress(saved);
   }
 
   // shifts current_period_end forward by whole days spent paused — no
   // benefits (booking, entry QR) are granted while paused since every gate
   // checks status === active, not just an unexpired period
-  private applyResume(sub: MemberSubscription) {
+  private async applyResume(sub: MemberSubscription) {
     if (sub.status !== SubscriptionStatus.PAUSED) {
       throw new BadRequestException(`Only paused subscriptions can be resumed (current: ${sub.status})`);
     }
@@ -242,7 +247,8 @@ export class SubscriptionsService {
     sub.current_period_end = newEnd;
     sub.status = SubscriptionStatus.ACTIVE;
     sub.paused_at = null;
-    return this.subRepo.save(sub);
+    const saved = await this.subRepo.save(sub);
+    return this.withProgress(saved);
   }
 
   async cancel(id: string, user: StaffJwtPayload) {
