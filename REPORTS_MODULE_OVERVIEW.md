@@ -36,7 +36,7 @@ here should be read as ruling it out later.
 `ReportsService.computeMetrics(gyms, start, end)` is the one place every
 number comes from — both endpoints and the daily-digest cron all call it.
 It takes a list of gyms and a date range and returns one `GymMetrics` object
-per gym, via **5 grouped SQL queries** (`GROUP BY gym_id`), regardless of
+per gym, via **6 grouped SQL queries** (`GROUP BY gym_id`), regardless of
 whether 1 gym or an org's whole roster was asked for:
 
 1. **Revenue** — `SUM(invoice.amount)` where `status = paid`, filtered on
@@ -49,10 +49,17 @@ whether 1 gym or an org's whole roster was asked for:
    booking's `created_at`.
 3. **Capacity/fill** — `SUM(slot.capacity)` vs `SUM(slot.booking_count)`
    over the same `starts_at` window, for the fill-rate percentage.
-4. **Members** — active member-gym-access count (a snapshot, "as of now")
+4. **Gym check-ins** — `COUNT(*)` of `Attendance` rows filtered on
+   `checked_in_at`, exposed as `attendance.gym_check_ins`. Distinct from
+   `bookings.checked_in` above: `Attendance` is written by the gym-door
+   check-in flow (staff-scanned entry QR / member-scanned desk QR, one row
+   per member/gym/day), independent of whether the member ever booked a
+   class — a gym that only does walk-in check-ins would otherwise always
+   show `bookings.checked_in: 0`.
+5. **Members** — active member-gym-access count (a snapshot, "as of now")
    and new-access-grants count (period-scoped on `granted_at`), one query
    with two `FILTER` clauses.
-5. **Subscriptions** — currently-active count (`active`/`past_due`/`paused`)
+6. **Subscriptions** — currently-active count (`active`/`past_due`/`paused`)
    and cancelled-in-period count, one query with two `FILTER` clauses.
 
 `GET /reports/gyms/:gymId/stats` calls this with a single gym.

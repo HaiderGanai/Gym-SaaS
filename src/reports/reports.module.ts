@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommunicationModule } from '../communication/communication.module';
 import { Invoice } from '../invoices/entities/invoice.entity';
 import { Booking } from '../bookings/entities/booking.entity';
+import { Attendance } from '../bookings/entities/attendance.entity';
 import { Slot } from '../schedule/entities/slot.entity';
 import { MemberGymAccess } from '../members/entities/member-gym-access.entity';
 import { MemberSubscription } from '../subscriptions/entities/member-subscription.entity';
@@ -17,6 +18,7 @@ import { ReportsController } from './reports.controller';
     TypeOrmModule.forFeature([
       Invoice,
       Booking,
+      Attendance,
       Slot,
       MemberGymAccess,
       MemberSubscription,

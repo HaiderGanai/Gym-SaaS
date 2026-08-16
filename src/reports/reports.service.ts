@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import { Invoice, InvoiceStatus } from '../invoices/entities/invoice.entity';
 import { Booking } from '../bookings/entities/booking.entity';
+import { Attendance } from '../bookings/entities/attendance.entity';
 import { Slot } from '../schedule/entities/slot.entity';
 import { MemberGymAccess } from '../members/entities/member-gym-access.entity';
 import { MemberSubscription } from '../subscriptions/entities/member-subscription.entity';
@@ -39,6 +40,10 @@ export interface GymMetrics {
     fill_rate: number;
     total_capacity: number;
     total_booked: number;
+    // gym check-ins (entry QR / desk QR scans, via Attendance) — distinct
+    // from bookings.checked_in, which only counts class-QR scans against a
+    // booked slot. A member can check into the gym without booking a class.
+    gym_check_ins: number;
   };
   members: {
     new_members: number;
@@ -56,6 +61,7 @@ export class ReportsService {
   constructor(
     @InjectRepository(Invoice) private invoiceRepo: Repository<Invoice>,
     @InjectRepository(Booking) private bookingRepo: Repository<Booking>,
+    @InjectRepository(Attendance) private attendanceRepo: Repository<Attendance>,
     @InjectRepository(Slot) private slotRepo: Repository<Slot>,
     @InjectRepository(MemberGymAccess)
     private accessRepo: Repository<MemberGymAccess>,
@@ -132,6 +138,18 @@ export class ReportsService {
       .groupBy('s.gym_id')
       .getRawMany<MetricRow>();
 
+    // gym check-ins: Attendance is one row per member/gym/day, written by
+    // both check-in methods (staff-scanned entry QR, member-scanned desk QR)
+    // via the shared markAttendanceOnce() — independent of class bookings.
+    const attendanceRows = await this.attendanceRepo
+      .createQueryBuilder('a')
+      .select('a.gym_id', 'gym_id')
+      .addSelect('COUNT(*)', 'gym_check_ins')
+      .where('a.gym_id IN (:...gymIds)', { gymIds })
+      .andWhere('a.checked_in_at >= :start AND a.checked_in_at < :end', { start, end })
+      .groupBy('a.gym_id')
+      .getRawMany<MetricRow>();
+
     const memberRows = await this.accessRepo
       .createQueryBuilder('a')
       .select('a.gym_id', 'gym_id')
@@ -168,6 +186,7 @@ export class ReportsService {
       const rev = find(revenueRows, gym.id);
       const bk = find(bookingRows, gym.id);
       const cap = find(capacityRows, gym.id);
+      const att = find(attendanceRows, gym.id);
       const mem = find(memberRows, gym.id);
       const sub = find(subRows, gym.id);
 
@@ -202,6 +221,7 @@ export class ReportsService {
           fill_rate: pct(totalBooked, totalCapacity),
           total_capacity: totalCapacity,
           total_booked: totalBooked,
+          gym_check_ins: Number(att?.gym_check_ins ?? 0),
         },
         members: {
           new_members: Number(mem?.new_members ?? 0),
@@ -232,6 +252,7 @@ export class ReportsService {
         waitlisted: acc.waitlisted + g.bookings.waitlisted,
         total_capacity: acc.total_capacity + g.attendance.total_capacity,
         total_booked: acc.total_booked + g.attendance.total_booked,
+        gym_check_ins: acc.gym_check_ins + g.attendance.gym_check_ins,
         new_members: acc.new_members + g.members.new_members,
         active_members: acc.active_members + g.members.active_members,
         active_subs: acc.active_subs + g.members.active_subscriptions,
@@ -250,6 +271,7 @@ export class ReportsService {
         waitlisted: 0,
         total_capacity: 0,
         total_booked: 0,
+        gym_check_ins: 0,
         new_members: 0,
         active_members: 0,
         active_subs: 0,
@@ -278,6 +300,7 @@ export class ReportsService {
         fill_rate: pct(t.total_booked, t.total_capacity),
         total_capacity: t.total_capacity,
         total_booked: t.total_booked,
+        gym_check_ins: t.gym_check_ins,
       },
       members: {
         new_members: t.new_members,

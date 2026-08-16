@@ -273,6 +273,7 @@ export class MailService {
     totals: {
       revenue: { total: number; invoice_count: number };
       bookings: { checked_in: number; no_show: number; confirmed: number };
+      attendance: { gym_check_ins: number };
       members: { new_members: number; cancelled_subscriptions: number };
     },
     byGym: {
@@ -306,7 +307,8 @@ export class MailService {
           <table style="border-collapse:collapse">
             <tr><td style="padding:4px 16px 4px 0">Revenue</td><td><strong>${currency} ${totals.revenue.total.toFixed(2)}</strong> (${totals.revenue.invoice_count} invoice${totals.revenue.invoice_count === 1 ? '' : 's'})</td></tr>
             <tr><td style="padding:4px 16px 4px 0">Bookings confirmed</td><td>${totals.bookings.confirmed}</td></tr>
-            <tr><td style="padding:4px 16px 4px 0">Checked in</td><td>${totals.bookings.checked_in}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Class check-ins</td><td>${totals.bookings.checked_in}</td></tr>
+            <tr><td style="padding:4px 16px 4px 0">Gym check-ins</td><td>${totals.attendance.gym_check_ins}</td></tr>
             <tr><td style="padding:4px 16px 4px 0">No-shows</td><td>${totals.bookings.no_show}</td></tr>
             <tr><td style="padding:4px 16px 4px 0">New members</td><td>${totals.members.new_members}</td></tr>
             <tr><td style="padding:4px 16px 4px 0">Cancelled subscriptions</td><td>${totals.members.cancelled_subscriptions}</td></tr>
