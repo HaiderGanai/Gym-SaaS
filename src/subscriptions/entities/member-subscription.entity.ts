@@ -52,10 +52,15 @@ export class MemberSubscription {
   @Column({ type: 'enum', enum: SubscriptionStatus })
   status!: SubscriptionStatus;
 
-  @Column({ type: 'date' })
+  // utc: true — without it, TypeORM's `date` columns serialize/parse using the
+  // server's LOCAL timezone (DateUtils.mixedDateToDateString), which drifts a
+  // calendar day off Attendance.date (always UTC) and subscription-progress.util.ts's
+  // toDate() (parses as UTC midnight) whenever the server isn't running in UTC —
+  // producing days_left > total_days and check_ins undercounting.
+  @Column({ type: 'date', utc: true })
   current_period_start!: Date;
 
-  @Column({ type: 'date' })
+  @Column({ type: 'date', utc: true })
   current_period_end!: Date;
 
   // set on pause, cleared on resume — resume() reads this to shift

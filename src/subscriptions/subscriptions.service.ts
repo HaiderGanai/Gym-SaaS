@@ -81,7 +81,7 @@ export class SubscriptionsService {
       charge = this.applyDiscount(charge, discount);
     }
 
-    const start = dto.start_date ? new Date(dto.start_date) : new Date();
+    const start = dto.start_date ? new Date(dto.start_date) : this.startOfUtcDay(new Date());
     const sub = await this.subRepo.save(
       this.subRepo.create({
         member_id: dto.member_id,
@@ -183,7 +183,7 @@ export class SubscriptionsService {
 
     // lapsed subs restart today; current ones extend seamlessly
     const prevEnd = new Date(sub.current_period_end);
-    const start = prevEnd < new Date() ? new Date() : prevEnd;
+    const start = prevEnd < new Date() ? this.startOfUtcDay(new Date()) : prevEnd;
     sub.current_period_start = start;
     sub.current_period_end = this.periodEnd(start, plan.type);
     sub.status = SubscriptionStatus.ACTIVE;
@@ -243,7 +243,7 @@ export class SubscriptionsService {
     }
     const pausedDays = Math.round((Date.now() - new Date(sub.paused_at!).getTime()) / 86_400_000);
     const newEnd = new Date(sub.current_period_end);
-    newEnd.setDate(newEnd.getDate() + pausedDays);
+    newEnd.setUTCDate(newEnd.getUTCDate() + pausedDays);
     sub.current_period_end = newEnd;
     sub.status = SubscriptionStatus.ACTIVE;
     sub.paused_at = null;
@@ -285,13 +285,20 @@ export class SubscriptionsService {
   private periodEnd(start: Date, type: PlanType): Date {
     const end = new Date(start);
     switch (type) {
-      case PlanType.WEEKLY:  end.setDate(end.getDate() + 7); break;
-      case PlanType.MONTHLY: end.setMonth(end.getMonth() + 1); break;
-      case PlanType.YEARLY:  end.setFullYear(end.getFullYear() + 1); break;
+      case PlanType.WEEKLY:  end.setUTCDate(end.getUTCDate() + 7); break;
+      case PlanType.MONTHLY: end.setUTCMonth(end.getUTCMonth() + 1); break;
+      case PlanType.YEARLY:  end.setUTCFullYear(end.getUTCFullYear() + 1); break;
       // ponytail: packs/payg get 1-year validity; per-plan validity column if gyms ask
-      default:               end.setFullYear(end.getFullYear() + 1);
+      default:               end.setUTCFullYear(end.getUTCFullYear() + 1);
     }
     return end;
+  }
+
+  // Floors to the start of the current UTC calendar day — matches the `utc: true`
+  // date columns and Attendance.date (also UTC), so "today" means the same day
+  // everywhere regardless of the server's local timezone.
+  private startOfUtcDay(d: Date): Date {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
   private async validateDiscount(code: string, gymId: string): Promise<Discount> {
