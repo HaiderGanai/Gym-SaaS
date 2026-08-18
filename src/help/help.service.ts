@@ -44,6 +44,20 @@ const TERMS = {
     'This is placeholder terms of service text covering membership terms, booking rules, and liability. Replace with the final legal copy before launch.',
 };
 
+const MEMBERSHIP_TERMS = {
+  title: 'Membership Terms',
+  updated_at: '2026-01-01',
+  content:
+    'This is placeholder membership terms text covering billing cycles, pause/resume rules, cancellation policy, and refund eligibility. Replace with the final legal copy before launch.',
+};
+
+const CONTACT_SUPPORT = {
+  email: 'support@example.com',
+  phone: '+1 (555) 010-2020',
+  hours: 'Mon–Fri, 9:00 AM – 6:00 PM',
+  address: '123 Placeholder Ave, Suite 100, Sample City, ST 00000',
+};
+
 @Injectable()
 export class HelpService {
   getFaqs() {
@@ -56,5 +70,13 @@ export class HelpService {
 
   getTerms() {
     return TERMS;
+  }
+
+  getMembershipTerms() {
+    return MEMBERSHIP_TERMS;
+  }
+
+  getContactSupport() {
+    return CONTACT_SUPPORT;
   }
 }

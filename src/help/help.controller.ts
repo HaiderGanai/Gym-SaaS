@@ -19,4 +19,14 @@ export class HelpController {
   getTerms() {
     return this.helpService.getTerms();
   }
+
+  @Get('membership-terms')
+  getMembershipTerms() {
+    return this.helpService.getMembershipTerms();
+  }
+
+  @Get('contact-support')
+  getContactSupport() {
+    return this.helpService.getContactSupport();
+  }
 }
