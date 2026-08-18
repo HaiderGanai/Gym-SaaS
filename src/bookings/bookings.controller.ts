@@ -90,14 +90,20 @@ export class CheckinController {
 }
 
 // lives here (not MembersModule) because it is subscription+QR logic
-@Controller('members/me')
+@Controller('members')
 export class EntryQrController {
   constructor(private bookingsService: BookingsService) {}
 
-  @Get('entry-qr')
+  @Get('me/entry-qr')
   @UseGuards(MemberJwtGuard)
   entryQr(@CurrentUser() user: MemberJwtPayload, @Query('gym_id') gymId?: string) {
     return this.bookingsService.entryQr(user, gymId);
+  }
+
+  @Get('profile/checkin-status')
+  @UseGuards(MemberJwtGuard)
+  checkinStatus(@CurrentUser() user: MemberJwtPayload, @Query('gym_id') gymId?: string) {
+    return this.bookingsService.checkinStatus(user, gymId);
   }
 }
 

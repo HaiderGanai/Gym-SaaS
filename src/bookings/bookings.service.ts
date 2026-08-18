@@ -277,6 +277,44 @@ export class BookingsService {
     };
   }
 
+  // ── Member: today's check-in status + last check-in, either gym entry method ──
+
+  async checkinStatus(user: MemberJwtPayload, gymId?: string) {
+    const gym = gymId ?? user.primary_gym_id;
+    if (!gym || !user.gym_ids.includes(gym)) throw new ForbiddenException('Access denied');
+
+    const last = await this.attendanceRepo.findOne({
+      where: { member_id: user.sub, gym_id: gym },
+      order: { date: 'DESC' },
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const checkedInToday = last?.date === today;
+
+    return {
+      gym_id: gym,
+      checked_in_today: checkedInToday,
+      checked_in_at: checkedInToday ? last!.checked_in_at : null,
+      last_check_in: last ? {
+        date: last.date,
+        checked_in_at: last.checked_in_at,
+        days_ago: this.daysBetween(last.date, today),
+        label: this.checkinLabel(this.daysBetween(last.date, today)),
+      } : null,
+    };
+  }
+
+  // both dates are 'YYYY-MM-DD' strings (pg date-column parser override) — diff as UTC midnights
+  private daysBetween(from: string, to: string): number {
+    return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+  }
+
+  private checkinLabel(daysAgo: number): string {
+    if (daysAgo === 0) return 'today';
+    if (daysAgo === 1) return 'yesterday';
+    return `${daysAgo} days ago`;
+  }
+
   // ── Member: scans the gym's static desk QR themselves ───────────────────
 
   async checkinGymScan(token: string, user: MemberJwtPayload) {
