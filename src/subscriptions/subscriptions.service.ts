@@ -16,7 +16,7 @@ import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { RenewSubscriptionDto } from './dto/renew-subscription.dto';
 import { InvoicesService } from '../invoices/invoices.service';
 import { scopedGymIds } from '../common/utils/gym-scope';
-import { computeSubscriptionProgress, checkInsWindow } from './subscription-progress.util';
+import { computeSubscriptionProgress, checkInsWindow, pausedDaysElapsed } from './subscription-progress.util';
 import { StaffRole } from '../staff/entities/staff-user.entity';
 import type { StaffJwtPayload } from '../common/interfaces/jwt-payload.interface';
 
@@ -241,7 +241,7 @@ export class SubscriptionsService {
     if (sub.status !== SubscriptionStatus.PAUSED) {
       throw new BadRequestException(`Only paused subscriptions can be resumed (current: ${sub.status})`);
     }
-    const pausedDays = Math.round((Date.now() - new Date(sub.paused_at!).getTime()) / 86_400_000);
+    const pausedDays = pausedDaysElapsed(sub.paused_at!);
     const newEnd = new Date(sub.current_period_end);
     newEnd.setUTCDate(newEnd.getUTCDate() + pausedDays);
     sub.current_period_end = newEnd;

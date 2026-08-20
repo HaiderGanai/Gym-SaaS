@@ -49,6 +49,13 @@ export function computeSubscriptionProgress(
   return { total_days, days_left };
 }
 
+// Whole calendar days elapsed since a pause, for shifting current_period_end
+// forward on resume. Floors, not rounds: a member paused 13h shouldn't be
+// credited a full bonus day they were never actually paused for.
+export function pausedDaysElapsed(pausedAt: Date | string, now: Date = new Date()): number {
+  return Math.floor((now.getTime() - toDate(pausedAt).getTime()) / DAY_MS);
+}
+
 // Mirrors the same freeze rule for the attendance count window: bounded by
 // "today" while active, bounded by the pause moment while paused. Returns
 // 'YYYY-MM-DD' strings for direct use in a TypeORM Between() on Attendance.date.

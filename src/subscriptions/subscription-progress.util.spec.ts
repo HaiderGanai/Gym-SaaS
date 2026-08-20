@@ -1,5 +1,23 @@
 import { SubscriptionStatus } from './entities/member-subscription.entity';
-import { computeSubscriptionProgress, checkInsWindow } from './subscription-progress.util';
+import { computeSubscriptionProgress, checkInsWindow, pausedDaysElapsed } from './subscription-progress.util';
+
+describe('pausedDaysElapsed', () => {
+  it('does not credit a bonus day for a pause under 24h', () => {
+    const days = pausedDaysElapsed(
+      '2026-08-17T08:49:00.000Z',
+      new Date('2026-08-17T21:49:00.000Z'), // 13h later
+    );
+    expect(days).toBe(0);
+  });
+
+  it('credits exactly the whole days elapsed for a multi-day pause', () => {
+    const days = pausedDaysElapsed(
+      '2026-08-10T00:00:00.000Z',
+      new Date('2026-08-12T18:00:00.000Z'), // 2.75 days later
+    );
+    expect(days).toBe(2);
+  });
+});
 
 describe('computeSubscriptionProgress', () => {
   it('computes days_left from today for an active subscription', () => {
