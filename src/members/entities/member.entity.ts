@@ -61,6 +61,11 @@ export class Member {
   @Column({ nullable: true })
   fcm_token!: string;
 
+  // browser PushSubscription object ({ endpoint, keys: { p256dh, auth } }),
+  // registered via POST /notifications/web-push-subscription
+  @Column({ type: 'jsonb', nullable: true })
+  web_push_subscription!: Record<string, unknown> | null;
+
   @Column({ nullable: true })
   invite_token!: string;
 

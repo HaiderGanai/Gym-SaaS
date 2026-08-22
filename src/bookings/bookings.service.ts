@@ -90,6 +90,9 @@ export class BookingsService {
       booking.qr_token = this.bookingQr(booking, slot);
       booking = await this.bookingRepo.save(booking);
       const qr_image = await QRCode.toDataURL(booking.qr_token);
+      await this.notificationsService
+        .notifyBookingConfirmed(user.sub, slot.gym_id, slot.activity_name, slot.starts_at, booking.id, slot.id)
+        .catch(() => undefined);
       return { message: 'Booking confirmed', booking: { ...booking, slot, qr_image } };
     }
 
@@ -103,6 +106,9 @@ export class BookingsService {
       slot_id: slot.id, member_id: user.sub,
       status: BookingStatus.WAITLISTED, waitlist_position: position,
     }));
+    await this.notificationsService
+      .notifyBookingWaitlisted(user.sub, slot.gym_id, slot.activity_name, slot.starts_at, booking.id, slot.id, position)
+      .catch(() => undefined);
     return {
       message: `Class is full — you are on the waitlist (position ${position})`,
       booking: { ...booking, slot },
@@ -168,6 +174,14 @@ export class BookingsService {
     booking.status = BookingStatus.CANCELLED;
     booking.cancelled_at = new Date();
     await this.bookingRepo.save(booking);
+
+    // staff-side cancel (front-desk override) is the only cancel path worth
+    // pushing — a member who cancels their own booking already knows
+    if (!enforceCutoff) {
+      await this.notificationsService
+        .notifyBookingCancelled(booking.member_id, slot.gym_id, slot.activity_name, slot.starts_at)
+        .catch(() => undefined);
+    }
 
     // a confirmed cancellation frees a spot: promote the waitlist, else release the count
     let promoted: Booking | null = null;

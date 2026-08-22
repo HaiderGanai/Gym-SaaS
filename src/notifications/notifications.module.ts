@@ -8,6 +8,7 @@ import { Gym } from '../gym/entities/gym.entity';
 import { CommunicationModule } from '../communication/communication.module';
 import { NotificationsService } from './notifications.service';
 import { FirebaseService } from './firebase.service';
+import { WebPushService } from './web-push.service';
 import { NotificationsController, CommunicationController } from './notifications.controller';
 
 @Module({
@@ -16,7 +17,7 @@ import { NotificationsController, CommunicationController } from './notification
     CommunicationModule, // MailService — the email half of every notification
   ],
   controllers: [NotificationsController, CommunicationController],
-  providers: [NotificationsService, FirebaseService],
+  providers: [NotificationsService, FirebaseService, WebPushService],
   exports: [NotificationsService],
 })
 export class NotificationsModule {}

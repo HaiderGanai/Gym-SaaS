@@ -8,6 +8,7 @@ import { Member } from '../members/entities/member.entity';
 import { MemberGymAccess } from '../members/entities/member-gym-access.entity';
 import { Attendance } from '../bookings/entities/attendance.entity';
 import { InvoicesModule } from '../invoices/invoices.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsController } from './subscriptions.controller';
 
@@ -17,6 +18,7 @@ import { SubscriptionsController } from './subscriptions.controller';
       MemberSubscription, MembershipPlan, Discount, Gym, Member, MemberGymAccess, Attendance,
     ]),
     InvoicesModule,
+    NotificationsModule,
   ],
   controllers: [SubscriptionsController],
   providers: [SubscriptionsService],

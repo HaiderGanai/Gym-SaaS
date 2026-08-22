@@ -15,6 +15,7 @@ import { Attendance } from '../bookings/entities/attendance.entity';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { RenewSubscriptionDto } from './dto/renew-subscription.dto';
 import { InvoicesService } from '../invoices/invoices.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { scopedGymIds } from '../common/utils/gym-scope';
 import { computeSubscriptionProgress, checkInsWindow, pausedDaysElapsed } from './subscription-progress.util';
 import { StaffRole } from '../staff/entities/staff-user.entity';
@@ -42,6 +43,7 @@ export class SubscriptionsService {
     @InjectRepository(Attendance)
     private attendanceRepo: Repository<Attendance>,
     private invoicesService: InvoicesService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // ── Create (staff-led, manual billing) ───────────────────────────────────
@@ -231,6 +233,9 @@ export class SubscriptionsService {
     sub.status = SubscriptionStatus.PAUSED;
     sub.paused_at = new Date();
     const saved = await this.subRepo.save(sub);
+    await this.notificationsService
+      .notifySubscriptionPaused(saved.member_id, saved.gym_id, saved.plan.name)
+      .catch(() => undefined);
     return this.withProgress(saved);
   }
 
@@ -248,6 +253,9 @@ export class SubscriptionsService {
     sub.status = SubscriptionStatus.ACTIVE;
     sub.paused_at = null;
     const saved = await this.subRepo.save(sub);
+    await this.notificationsService
+      .notifySubscriptionResumed(saved.member_id, saved.gym_id, saved.plan.name)
+      .catch(() => undefined);
     return this.withProgress(saved);
   }
 
@@ -276,6 +284,9 @@ export class SubscriptionsService {
     for (const sub of recurring) {
       sub.status = SubscriptionStatus.PAST_DUE;
       await this.subRepo.save(sub);
+      await this.notificationsService
+        .notifySubscriptionPastDue(sub.member_id, sub.gym_id, sub.plan.name)
+        .catch((err) => this.logger.error(`past_due notify failed for sub ${sub.id}`, err as Error));
     }
     if (recurring.length) this.logger.log(`Marked ${recurring.length} subscription(s) past_due`);
   }

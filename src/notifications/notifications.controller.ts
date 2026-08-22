@@ -4,6 +4,8 @@ import {
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
+import { RegisterWebPushSubscriptionDto } from './dto/register-web-push-subscription.dto';
+import { TestPushDto } from './dto/test-push.dto';
 import { BroadcastDto } from './dto/broadcast.dto';
 import { StaffJwtGuard } from '../auth/guards/staff-jwt.guard';
 import { MemberJwtGuard } from '../auth/guards/member-jwt.guard';
@@ -52,6 +54,29 @@ export class NotificationsController {
   @UseGuards(MemberJwtGuard)
   clearToken(@CurrentUser() user: MemberJwtPayload) {
     return this.notificationsService.clearDeviceToken(user);
+  }
+
+  @Post('web-push-subscription')
+  @UseGuards(MemberJwtGuard)
+  registerWebPushSubscription(
+    @Body() dto: RegisterWebPushSubscriptionDto, @CurrentUser() user: MemberJwtPayload,
+  ) {
+    return this.notificationsService.registerWebPushSubscription(user, dto);
+  }
+
+  @Delete('web-push-subscription')
+  @UseGuards(MemberJwtGuard)
+  clearWebPushSubscription(@CurrentUser() user: MemberJwtPayload) {
+    return this.notificationsService.clearWebPushSubscription(user);
+  }
+
+  // manual test — fires a canned notification through every channel the
+  // logged-in member has registered, so wiring can be verified without
+  // triggering a real booking/cancel/announcement flow
+  @Post('test-push')
+  @UseGuards(MemberJwtGuard)
+  testPush(@Body() dto: TestPushDto, @CurrentUser() user: MemberJwtPayload) {
+    return this.notificationsService.sendTestPush(user, dto.title, dto.body);
   }
 }
 

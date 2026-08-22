@@ -11,9 +11,11 @@ import { Gym } from '../gym/entities/gym.entity';
 import { Invoice } from '../invoices/entities/invoice.entity';
 import { MailService } from '../communication/mail.service';
 import { FirebaseService } from './firebase.service';
+import { WebPushService, WebPushSubscription } from './web-push.service';
 import { assertGymAccess } from '../common/utils/gym-scope';
 import type { MemberJwtPayload, StaffJwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { BroadcastDto } from './dto/broadcast.dto';
+import { RegisterWebPushSubscriptionDto } from './dto/register-web-push-subscription.dto';
 
 // how long before a class starts to send the reminder
 // ponytail: single fixed lead time — per-gym config if that's ever requested
@@ -31,7 +33,41 @@ export class NotificationsService {
     @InjectRepository(Gym) private gymRepo: Repository<Gym>,
     private mailService: MailService,
     private firebase: FirebaseService,
+    private webPush: WebPushService,
   ) {}
+
+  // Both push channels are best-effort and independent of each other — a
+  // member can have a mobile FCM token, a browser web-push subscription,
+  // both, or neither. One NotificationLog row still gets one push_status:
+  // sent if either channel delivered, failed if at least one was attempted
+  // and none delivered, skipped if the member has no device registered at all.
+  private async dispatchPush(
+    member: Member, title: string, body: string, data?: Record<string, unknown>,
+  ): Promise<DeliveryStatus> {
+    let attempted = false;
+    let sent = false;
+
+    if (member.fcm_token) {
+      attempted = true;
+      const result = await this.firebase.send(member.fcm_token, title, body, data);
+      if (result === 'sent') sent = true;
+      if (result === 'token_invalid') await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
+    }
+
+    if (member.web_push_subscription) {
+      attempted = true;
+      const result = await this.webPush.send(
+        member.web_push_subscription as unknown as WebPushSubscription, title, body, data,
+      );
+      if (result === 'sent') sent = true;
+      if (result === 'subscription_invalid') {
+        await this.memberRepo.update(member.id, { web_push_subscription: () => 'NULL' });
+      }
+    }
+
+    if (!attempted) return DeliveryStatus.SKIPPED;
+    return sent ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
+  }
 
   // ── Core dispatch — every member-facing event goes through here ─────────
   // Looks the member up itself (for the fcm_token + email), so callers only
@@ -67,13 +103,7 @@ export class NotificationsService {
       }
     }
 
-    if (member.fcm_token) {
-      const result = await this.firebase.send(member.fcm_token, params.title, params.body, params.data);
-      log.push_status = result === 'sent' ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
-      if (result === 'token_invalid') {
-        await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
-      }
-    }
+    log.push_status = await this.dispatchPush(member, params.title, params.body, params.data);
 
     await this.logRepo.save(log);
   }
@@ -91,11 +121,7 @@ export class NotificationsService {
       title: params.title, body: params.body, data: params.data ?? null,
       email_status: DeliveryStatus.SENT,
     });
-    if (member.fcm_token) {
-      const result = await this.firebase.send(member.fcm_token, params.title, params.body, params.data);
-      log.push_status = result === 'sent' ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
-      if (result === 'token_invalid') await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
-    }
+    log.push_status = await this.dispatchPush(member, params.title, params.body, params.data);
     await this.logRepo.save(log);
   }
 
@@ -145,6 +171,82 @@ export class NotificationsService {
       body: `Your invoice ${invoice.invoice_number} for ${invoice.currency} ${Number(invoice.amount).toFixed(2)} is ready.`,
       data: { invoice_id: invoice.id },
       email: (m) => this.mailService.sendInvoiceEmail(m.email, m.full_name, invoice, gym.name),
+    });
+  }
+
+  // Booking confirmed/waitlisted/cancelled-by-staff and subscription
+  // past_due/paused/resumed have no email template today — push + in-app
+  // log only (no `email` callback). Add a MailService method + pass it in
+  // here if/when these need an email leg too; the log row already tracks
+  // email_status = skipped in the meantime, same as any event without one.
+
+  async notifyBookingConfirmed(
+    memberId: string, gymId: string, activityName: string, startsAt: Date, bookingId: string, slotId: string,
+  ): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'booking_confirmed',
+      title: 'Booking confirmed',
+      body: `You're confirmed for ${activityName} at ${startsAt.toISOString()}.`,
+      data: { booking_id: bookingId, slot_id: slotId, activity_name: activityName, starts_at: startsAt.toISOString() },
+    });
+  }
+
+  async notifyBookingWaitlisted(
+    memberId: string, gymId: string, activityName: string, startsAt: Date,
+    bookingId: string, slotId: string, position: number,
+  ): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'booking_waitlisted',
+      title: "You're on the waitlist",
+      body: `${activityName} is full — you're #${position} on the waitlist.`,
+      data: {
+        booking_id: bookingId, slot_id: slotId, activity_name: activityName,
+        starts_at: startsAt.toISOString(), waitlist_position: position,
+      },
+    });
+  }
+
+  async notifyBookingCancelled(
+    memberId: string, gymId: string, activityName: string, startsAt: Date,
+  ): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'booking_cancelled',
+      title: 'Booking cancelled',
+      body: `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled by the gym.`,
+      data: { activity_name: activityName, starts_at: startsAt.toISOString(), cancelled_by: 'staff' },
+    });
+  }
+
+  async notifySubscriptionPastDue(memberId: string, gymId: string, planName: string): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'subscription_past_due',
+      title: 'Membership past due',
+      body: `Your ${planName} membership has lapsed — renew at the front desk to keep booking classes.`,
+      data: { plan_name: planName },
+    });
+  }
+
+  async notifySubscriptionPaused(memberId: string, gymId: string, planName: string): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'subscription_paused',
+      title: 'Membership paused',
+      body: `Your ${planName} membership has been paused.`,
+      data: { plan_name: planName },
+    });
+  }
+
+  async notifySubscriptionResumed(memberId: string, gymId: string, planName: string): Promise<void> {
+    await this.notify({
+      memberId, gymId,
+      type: 'subscription_resumed',
+      title: 'Membership resumed',
+      body: `Your ${planName} membership is active again.`,
+      data: { plan_name: planName },
     });
   }
 
@@ -249,5 +351,44 @@ export class NotificationsService {
   async clearDeviceToken(user: MemberJwtPayload) {
     await this.memberRepo.update(user.sub, { fcm_token: () => 'NULL' });
     return { message: 'Device token cleared' };
+  }
+
+  // ── Member: browser web-push subscription (mirrors the FCM device token) ─
+
+  async registerWebPushSubscription(user: MemberJwtPayload, dto: RegisterWebPushSubscriptionDto) {
+    const subscription = { endpoint: dto.endpoint, keys: dto.keys };
+    await this.memberRepo.update(user.sub, { web_push_subscription: subscription });
+    return { message: 'Web push subscription registered' };
+  }
+
+  async clearWebPushSubscription(user: MemberJwtPayload) {
+    await this.memberRepo.update(user.sub, { web_push_subscription: () => 'NULL' });
+    return { message: 'Web push subscription cleared' };
+  }
+
+  // ── Member: manual test push — verifies wiring (VAPID keys, subscription
+  // validity, FCM token validity) without needing to trigger a real event ──
+
+  async sendTestPush(user: MemberJwtPayload, title?: string, body?: string) {
+    const member = await this.memberRepo.findOneByOrFail({ id: user.sub });
+    if (!member.fcm_token && !member.web_push_subscription) {
+      throw new NotFoundException(
+        'No device registered — call POST /notifications/device-token (mobile) or '
+        + 'POST /notifications/web-push-subscription (browser) first',
+      );
+    }
+    const push_status = await this.dispatchPush(
+      member,
+      title ?? 'Test notification',
+      body ?? 'If you can see this, push is wired up correctly.',
+      { type: 'test' },
+    );
+    return {
+      push_status,
+      channels_attempted: {
+        fcm: !!member.fcm_token,
+        web_push: !!member.web_push_subscription,
+      },
+    };
   }
 }
