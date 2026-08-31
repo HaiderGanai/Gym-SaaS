@@ -175,13 +175,12 @@ export class BookingsService {
     booking.cancelled_at = new Date();
     await this.bookingRepo.save(booking);
 
-    // staff-side cancel (front-desk override) is the only cancel path worth
-    // pushing — a member who cancels their own booking already knows
-    if (!enforceCutoff) {
-      await this.notificationsService
-        .notifyBookingCancelled(booking.member_id, slot.gym_id, slot.activity_name, slot.starts_at)
-        .catch(() => undefined);
-    }
+    await this.notificationsService
+      .notifyBookingCancelled(
+        booking.member_id, slot.gym_id, slot.activity_name, slot.starts_at,
+        enforceCutoff ? 'member' : 'staff',
+      )
+      .catch(() => undefined);
 
     // a confirmed cancellation frees a spot: promote the waitlist, else release the count
     let promoted: Booking | null = null;

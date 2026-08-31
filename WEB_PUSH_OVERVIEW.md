@@ -75,7 +75,7 @@ the member has no device registered on any channel.
 |---|---|---|
 | Booking confirmed | `BookingsService.book()`, capacity claim succeeds | **New** |
 | Booking waitlisted | `BookingsService.book()`, class full | **New** |
-| Booking cancelled (staff) | `PATCH /bookings/:id/staff-cancel` | **New** — member self-cancel (`PATCH /bookings/:id/cancel`) deliberately does **not** notify, they just did it themselves |
+| Booking cancelled | `PATCH /bookings/:id/staff-cancel` or member's own `PATCH /bookings/:id/cancel` | **New** — originally staff-cancel-only (member self-cancel was considered self-evident, no push needed); widened so a member's own cancel also logs + pushes, e.g. to sync their other devices. `data.cancelled_by: 'member' \| 'staff'` and the body wording tell the two apart |
 | Waitlist promoted | A confirmed cancellation frees a spot | Existed (email+FCM) |
 | Class reminder | 15-min cron, 2h before `starts_at` | Existed (email+FCM) |
 | Gym cancels class | `PATCH /schedule/slots/:id/disable` | Existed (email+FCM) |

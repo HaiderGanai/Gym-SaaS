@@ -227,14 +227,16 @@ export class NotificationsService {
   }
 
   async notifyBookingCancelled(
-    memberId: string, gymId: string, activityName: string, startsAt: Date,
+    memberId: string, gymId: string, activityName: string, startsAt: Date, cancelledBy: 'member' | 'staff',
   ): Promise<void> {
     await this.notify({
       memberId, gymId,
       type: 'booking_cancelled',
       title: 'Booking cancelled',
-      body: `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled by the gym.`,
-      data: { activity_name: activityName, starts_at: startsAt.toISOString(), cancelled_by: 'staff' },
+      body: cancelledBy === 'staff'
+        ? `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled by the gym.`
+        : `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled.`,
+      data: { activity_name: activityName, starts_at: startsAt.toISOString(), cancelled_by: cancelledBy },
     });
   }
 

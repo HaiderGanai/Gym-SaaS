@@ -147,7 +147,7 @@ shapes it'll receive in a `push` event or via `GET /notifications`:
 |---|---|
 | `booking_confirmed` | `{ booking_id, slot_id, activity_name, starts_at }` |
 | `booking_waitlisted` | `{ booking_id, slot_id, activity_name, starts_at, waitlist_position }` |
-| `booking_cancelled` | `{ activity_name, starts_at, cancelled_by: "staff" }` |
+| `booking_cancelled` | `{ activity_name, starts_at, cancelled_by: "staff" \| "member" }` — fires on staff `.../staff-cancel` *and* on the member's own `.../cancel` |
 | `waitlist_promoted` | `{ activity_name, starts_at }` |
 | `booking_reminder` | `{ booking_id, slot_id }` |
 | `slot_disabled` | `{ activity_name, starts_at }` |
