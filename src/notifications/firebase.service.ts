@@ -39,12 +39,13 @@ export class FirebaseService implements OnModuleInit {
     title: string,
     body: string,
     data?: Record<string, unknown>,
+    imageUrl?: string,
   ): Promise<'sent' | 'failed' | 'token_invalid'> {
     if (!this.app) return 'failed';
     try {
       await getMessaging(this.app).send({
         token,
-        notification: { title, body },
+        notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
         data: data ? this.stringify(data) : undefined,
       });
       return 'sent';

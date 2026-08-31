@@ -76,7 +76,7 @@ export class NotificationsController {
   @Post('test-push')
   @UseGuards(MemberJwtGuard)
   testPush(@Body() dto: TestPushDto, @CurrentUser() user: MemberJwtPayload) {
-    return this.notificationsService.sendTestPush(user, dto.title, dto.body);
+    return this.notificationsService.sendTestPush(user, dto.title, dto.body, dto.gym_id);
   }
 }
 

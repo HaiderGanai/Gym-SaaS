@@ -40,12 +40,15 @@ export class WebPushService implements OnModuleInit {
     title: string,
     body: string,
     data?: Record<string, unknown>,
+    icon?: string,
   ): Promise<'sent' | 'failed' | 'subscription_invalid'> {
     if (!this.enabled) return 'failed';
     try {
       await webpush.sendNotification(
         subscription as webpush.PushSubscription,
-        JSON.stringify({ title, body, data: data ?? {} }),
+        // ponytail: badge reuses the same logo as icon (no separate monochrome
+        // badge asset exists) — add one if the small status-bar badge needs to differ
+        JSON.stringify({ title, body, ...(icon ? { icon, badge: icon } : {}), data: data ?? {} }),
       );
       return 'sent';
     } catch (err) {

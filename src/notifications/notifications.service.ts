@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
@@ -42,14 +42,14 @@ export class NotificationsService {
   // sent if either channel delivered, failed if at least one was attempted
   // and none delivered, skipped if the member has no device registered at all.
   private async dispatchPush(
-    member: Member, title: string, body: string, data?: Record<string, unknown>,
+    member: Member, title: string, body: string, data?: Record<string, unknown>, icon?: string,
   ): Promise<DeliveryStatus> {
     let attempted = false;
     let sent = false;
 
     if (member.fcm_token) {
       attempted = true;
-      const result = await this.firebase.send(member.fcm_token, title, body, data);
+      const result = await this.firebase.send(member.fcm_token, title, body, data, icon);
       if (result === 'sent') sent = true;
       if (result === 'token_invalid') await this.memberRepo.update(member.id, { fcm_token: () => 'NULL' });
     }
@@ -57,7 +57,7 @@ export class NotificationsService {
     if (member.web_push_subscription) {
       attempted = true;
       const result = await this.webPush.send(
-        member.web_push_subscription as unknown as WebPushSubscription, title, body, data,
+        member.web_push_subscription as unknown as WebPushSubscription, title, body, data, icon,
       );
       if (result === 'sent') sent = true;
       if (result === 'subscription_invalid') {
@@ -67,6 +67,17 @@ export class NotificationsService {
 
     if (!attempted) return DeliveryStatus.SKIPPED;
     return sent ? DeliveryStatus.SENT : DeliveryStatus.FAILED;
+  }
+
+  // Gym name + org logo for push branding — looked up here (not passed in by
+  // every caller) so every notify()/logDelivered() call gets it for free, the
+  // same reason the member itself is re-fetched here rather than threaded
+  // through every trigger signature. Organization.logo_url is the only logo
+  // this schema has (gyms don't carry their own) — every branch of an org
+  // shows the org's logo until a per-gym logo field is asked for.
+  private async gymBranding(gymId: string): Promise<{ name: string; icon?: string }> {
+    const gym = await this.gymRepo.findOne({ where: { id: gymId }, relations: { organization: true } });
+    return { name: gym?.name ?? '', icon: gym?.organization?.logo_url ?? undefined };
   }
 
   // ── Core dispatch — every member-facing event goes through here ─────────
@@ -84,6 +95,7 @@ export class NotificationsService {
     email?: (member: Member) => Promise<void>;
   }): Promise<void> {
     const member = await this.memberRepo.findOneByOrFail({ id: params.memberId });
+    const branding = await this.gymBranding(params.gymId);
     const log = this.logRepo.create({
       gym_id: params.gymId,
       member_id: params.memberId,
@@ -103,7 +115,11 @@ export class NotificationsService {
       }
     }
 
-    log.push_status = await this.dispatchPush(member, params.title, params.body, params.data);
+    // gym_name/gym_icon_url ride along in the push payload only — the stored
+    // log.data stays undecorated since GET /notifications joins gym.organization
+    // for display instead of duplicating it into stored jsonb
+    const pushData = { ...(params.data ?? {}), gym_name: branding.name, ...(branding.icon ? { gym_icon_url: branding.icon } : {}) };
+    log.push_status = await this.dispatchPush(member, params.title, params.body, pushData, branding.icon);
 
     await this.logRepo.save(log);
   }
@@ -116,12 +132,14 @@ export class NotificationsService {
     data?: Record<string, unknown>;
   }): Promise<void> {
     const member = await this.memberRepo.findOneByOrFail({ id: params.memberId });
+    const branding = await this.gymBranding(params.gymId);
     const log = this.logRepo.create({
       gym_id: params.gymId, member_id: params.memberId, type: params.type,
       title: params.title, body: params.body, data: params.data ?? null,
       email_status: DeliveryStatus.SENT,
     });
-    log.push_status = await this.dispatchPush(member, params.title, params.body, params.data);
+    const pushData = { ...(params.data ?? {}), gym_name: branding.name, ...(branding.icon ? { gym_icon_url: branding.icon } : {}) };
+    log.push_status = await this.dispatchPush(member, params.title, params.body, pushData, branding.icon);
     await this.logRepo.save(log);
   }
 
@@ -310,11 +328,20 @@ export class NotificationsService {
 
   // ── Member: in-app notification inbox ────────────────────────────────────
 
-  listForMember(user: MemberJwtPayload, unreadOnly: boolean) {
-    return this.logRepo.find({
+  // gym relation carries name + org logo for display — no need to duplicate
+  // either into the stored log.data, this is a live join, never stale
+  private shapeNotification(log: NotificationLog) {
+    const { gym, ...rest } = log;
+    return { ...rest, gym_name: gym?.name ?? null, gym_icon_url: gym?.organization?.logo_url ?? null };
+  }
+
+  async listForMember(user: MemberJwtPayload, unreadOnly: boolean) {
+    const logs = await this.logRepo.find({
       where: { member_id: user.sub, ...(unreadOnly ? { is_read: false } : {}) },
       order: { created_at: 'DESC' },
+      relations: { gym: { organization: true } },
     });
+    return logs.map((log) => this.shapeNotification(log));
   }
 
   async unreadCount(user: MemberJwtPayload) {
@@ -323,14 +350,17 @@ export class NotificationsService {
   }
 
   async markRead(id: string, user: MemberJwtPayload) {
-    const log = await this.logRepo.findOne({ where: { id, member_id: user.sub } });
+    const log = await this.logRepo.findOne({
+      where: { id, member_id: user.sub },
+      relations: { gym: { organization: true } },
+    });
     if (!log) throw new NotFoundException('Notification not found');
     if (!log.is_read) {
       log.is_read = true;
       log.read_at = new Date();
       await this.logRepo.save(log);
     }
-    return log;
+    return this.shapeNotification(log);
   }
 
   async markAllRead(user: MemberJwtPayload) {
@@ -369,7 +399,7 @@ export class NotificationsService {
   // ── Member: manual test push — verifies wiring (VAPID keys, subscription
   // validity, FCM token validity) without needing to trigger a real event ──
 
-  async sendTestPush(user: MemberJwtPayload, title?: string, body?: string) {
+  async sendTestPush(user: MemberJwtPayload, title?: string, body?: string, gymId?: string) {
     const member = await this.memberRepo.findOneByOrFail({ id: user.sub });
     if (!member.fcm_token && !member.web_push_subscription) {
       throw new NotFoundException(
@@ -377,11 +407,19 @@ export class NotificationsService {
         + 'POST /notifications/web-push-subscription (browser) first',
       );
     }
+    // gym_id is optional — pass it to also exercise gym-branded icon/badge
+    // (the same path real notify() triggers use) instead of the generic test
+    if (gymId && !user.gym_ids.includes(gymId)) {
+      throw new ForbiddenException('Not affiliated with this gym');
+    }
+    const branding = gymId ? await this.gymBranding(gymId) : { name: '', icon: undefined as string | undefined };
+    const data = { type: 'test', ...(gymId ? { gym_name: branding.name, ...(branding.icon ? { gym_icon_url: branding.icon } : {}) } : {}) };
     const push_status = await this.dispatchPush(
       member,
       title ?? 'Test notification',
       body ?? 'If you can see this, push is wired up correctly.',
-      { type: 'test' },
+      data,
+      branding.icon,
     );
     return {
       push_status,
@@ -389,6 +427,7 @@ export class NotificationsService {
         fcm: !!member.fcm_token,
         web_push: !!member.web_push_subscription,
       },
+      ...(gymId ? { gym_name: branding.name, gym_icon_url: branding.icon ?? null } : {}),
     };
   }
 }
