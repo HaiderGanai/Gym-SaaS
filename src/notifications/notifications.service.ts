@@ -153,6 +153,17 @@ export class NotificationsService {
     });
   }
 
+  // Human-readable class time for notification bodies — day+date in the same
+  // style as the original cancellation body (Date.toDateString()), plus a
+  // readable time, pinned to UTC explicitly so it's correct regardless of
+  // server timezone (matches the UTC convention slot times are stored/expanded in).
+  // e.g. "Mon Aug 31 2026, 2:00 PM UTC". `data.starts_at` stays raw ISO for
+  // API consumers — this is for the display text only.
+  private formatSlotTime(date: Date): string {
+    const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+    return `${date.toDateString()}, ${time} UTC`;
+  }
+
   // ── Typed triggers — one per event the rest of the app fires ────────────
 
   async notifyWaitlistPromoted(
@@ -175,7 +186,7 @@ export class NotificationsService {
       memberId, gymId,
       type: 'slot_disabled',
       title: 'Class cancelled',
-      body: `${activityName} on ${startsAt.toDateString()} was cancelled.`,
+      body: `${activityName} on ${this.formatSlotTime(startsAt)} was cancelled.`,
       data: { activity_name: activityName, starts_at: startsAt.toISOString() },
       email: (m) => this.mailService.sendSlotDisabled(m.email, m.full_name, activityName, startsAt, gymName),
     });
@@ -205,7 +216,7 @@ export class NotificationsService {
       memberId, gymId,
       type: 'booking_confirmed',
       title: 'Booking confirmed',
-      body: `You're confirmed for ${activityName} at ${startsAt.toISOString()}.`,
+      body: `You're confirmed for ${activityName} at ${this.formatSlotTime(startsAt)}.`,
       data: { booking_id: bookingId, slot_id: slotId, activity_name: activityName, starts_at: startsAt.toISOString() },
     });
   }
@@ -234,8 +245,8 @@ export class NotificationsService {
       type: 'booking_cancelled',
       title: 'Booking cancelled',
       body: cancelledBy === 'staff'
-        ? `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled by the gym.`
-        : `Your booking for ${activityName} on ${startsAt.toDateString()} was cancelled.`,
+        ? `Your booking for ${activityName} on ${this.formatSlotTime(startsAt)} was cancelled by the gym.`
+        : `Your booking for ${activityName} on ${this.formatSlotTime(startsAt)} was cancelled.`,
       data: { activity_name: activityName, starts_at: startsAt.toISOString(), cancelled_by: cancelledBy },
     });
   }
@@ -290,7 +301,7 @@ export class NotificationsService {
         gymId: booking.slot.gym_id,
         type: 'booking_reminder',
         title: 'Upcoming class',
-        body: `${booking.slot.activity_name} starts at ${booking.slot.starts_at.toISOString()} — see you there!`,
+        body: `${booking.slot.activity_name} starts at ${this.formatSlotTime(booking.slot.starts_at)} — see you there!`,
         data: { booking_id: booking.id, slot_id: booking.slot.id },
         email: (m) => this.mailService.sendBookingReminder(
           m.email, m.full_name, booking.slot.activity_name, booking.slot.starts_at, booking.slot.gym.name,
